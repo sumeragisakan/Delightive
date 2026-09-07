@@ -15,9 +15,10 @@ Delightive is a reasoning workspace for detective stories and mystery analysis. 
 - Next.js App Router
 - React and TypeScript
 - Tailwind CSS
+- Drizzle ORM and SQLite
 - pnpm
 
-The persistence and AI-provider layers will be added behind explicit interfaces as the domain model is implemented.
+The SQLite database is local by default. The persistence boundary is kept on the server so a remote database can replace it later without coupling UI code to a specific driver.
 
 ## Local development
 
@@ -26,17 +27,31 @@ Open PowerShell in the repository and activate the project-local toolchain:
 ```powershell
 . .\Activate.ps1
 pnpm install
+pnpm db:migrate
 pnpm dev
 ```
 
 Then open <http://localhost:3000>.
 
+The default database is stored at `.data/delightive.sqlite`. Override it with `DATABASE_PATH`; see `.env.example`.
+
 Quality checks:
 
 ```powershell
+pnpm test
 pnpm lint
 pnpm build
 ```
+
+Database schema workflow:
+
+```powershell
+pnpm db:generate
+pnpm db:check
+pnpm db:migrate
+```
+
+Migration files under `drizzle/` are committed. Local database files under `.data/` are not.
 
 ## Initial roadmap
 
