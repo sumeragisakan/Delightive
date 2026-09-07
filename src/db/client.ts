@@ -1,3 +1,5 @@
+import "server-only";
+
 import { createDatabase, type DatabaseConnection } from "./connection";
 
 const databaseGlobal = globalThis as typeof globalThis & {

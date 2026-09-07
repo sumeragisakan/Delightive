@@ -13,8 +13,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Delightive",
-  description: "A delightful reasoning workspace for detective stories.",
+  title: {
+    default: "Delightive · 推理工作台",
+    template: "%s · Delightive",
+  },
+  description: "在固定事实之上整理人物、时间线与可复核推理。",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

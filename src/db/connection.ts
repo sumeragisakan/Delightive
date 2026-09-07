@@ -17,7 +17,7 @@ export function resolveDatabasePath(configuredPath = process.env.DATABASE_PATH) 
 
   return path.isAbsolute(databasePath)
     ? databasePath
-    : path.resolve(process.cwd(), databasePath);
+    : path.resolve(/* turbopackIgnore: true */ process.cwd(), databasePath);
 }
 
 export function createDatabase(configuredPath?: string) {
