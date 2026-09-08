@@ -95,3 +95,65 @@ describe("timeline migration", () => {
     }
   });
 });
+
+describe("evidence migration", () => {
+  it("preserves existing sources and initializes dependency revisions", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    try {
+      runMigration(sqlite, "0000_initial_schema.sql");
+      runMigration(sqlite, "0001_timeline_precision_and_event_revisions.sql");
+      sqlite
+        .prepare("insert into cases (id, title) values (?, ?)")
+        .run("case-1", "旧证据库");
+      sqlite
+        .prepare(
+          `insert into sources (id, case_id, kind, title, locator, excerpt)
+           values (?, ?, ?, ?, ?, ?)`,
+        )
+        .run("source-1", "case-1", "chapter", "第三章", "p.42", "钟声响起");
+      sqlite
+        .prepare(
+          `insert into claims (id, case_id, kind, status, content)
+           values (?, ?, ?, ?, ?)`,
+        )
+        .run("claim-1", "case-1", "fact", "accepted", "午夜听见钟声");
+      sqlite
+        .prepare(
+          `insert into claim_sources (claim_id, source_id, relation, notes)
+           values (?, ?, ?, ?)`,
+        )
+        .run("claim-1", "source-1", "origin", "原文出处");
+
+      runMigration(sqlite, "0002_evidence_source_revisions.sql");
+
+      expect(
+        sqlite
+          .prepare(
+            "select title, revision, archived_at from sources where id = ?",
+          )
+          .get("source-1"),
+      ).toEqual({ archived_at: null, revision: 1, title: "第三章" });
+      expect(
+        sqlite
+          .prepare(
+            "select source_revision from claim_sources where claim_id = ?",
+          )
+          .pluck()
+          .get("claim-1"),
+      ).toBe(1);
+      expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+      expect(
+        sqlite
+          .prepare(
+            "select name from sqlite_master where type = 'table' and name = ?",
+          )
+          .pluck()
+          .get("source_revisions"),
+      ).toBe("source_revisions");
+    } finally {
+      sqlite.close();
+    }
+  });
+});

@@ -321,6 +321,8 @@ export const sources = sqliteTable(
     locator: text("locator"),
     excerpt: text("excerpt"),
     notes: text("notes").notNull().default(""),
+    revision: integer("revision").notNull().default(1),
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(nowInMilliseconds),
@@ -329,10 +331,45 @@ export const sources = sqliteTable(
       .default(nowInMilliseconds),
   },
   (table) => [
-    index("sources_case_idx").on(table.caseId),
+    index("sources_case_evidence_idx").on(
+      table.caseId,
+      table.archivedAt,
+      table.updatedAt,
+    ),
     check(
       "sources_kind_check",
       sql`${table.kind} in ('narration', 'chapter', 'statement', 'document', 'image', 'user', 'other')`,
+    ),
+    check("sources_revision_check", sql`${table.revision} >= 1`),
+  ],
+);
+
+export const sourceRevisions = sqliteTable(
+  "source_revisions",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => sources.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    snapshot: text("snapshot").notNull(),
+    changedBy: text("changed_by", { enum: actorKinds })
+      .notNull()
+      .default("user"),
+    changedAt: integer("changed_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+  },
+  (table) => [
+    uniqueIndex("source_revisions_source_revision_unique").on(
+      table.sourceId,
+      table.revision,
+    ),
+    index("source_revisions_source_idx").on(table.sourceId),
+    check("source_revisions_revision_check", sql`${table.revision} >= 1`),
+    check(
+      "source_revisions_changed_by_check",
+      sql`${table.changedBy} in ('user', 'ai')`,
     ),
   ],
 );
@@ -428,6 +465,13 @@ export const claims = sqliteTable(
   },
   (table) => [
     index("claims_case_status_idx").on(table.caseId, table.status),
+    index("claims_case_evidence_idx").on(
+      table.caseId,
+      table.archivedAt,
+      table.kind,
+      table.status,
+      table.updatedAt,
+    ),
     index("claims_branch_idx").on(table.branchId),
     index("claims_speaker_idx").on(table.speakerPersonId),
     check(
@@ -463,6 +507,7 @@ export const claimSources = sqliteTable(
     sourceId: text("source_id")
       .notNull()
       .references(() => sources.id, { onDelete: "cascade" }),
+    sourceRevision: integer("source_revision").notNull().default(1),
     relation: text("relation", { enum: sourceRelationKinds })
       .notNull()
       .default("origin"),
@@ -475,6 +520,7 @@ export const claimSources = sqliteTable(
       "claim_sources_relation_check",
       sql`${table.relation} in ('origin', 'supports', 'contradicts')`,
     ),
+    check("claim_sources_revision_check", sql`${table.sourceRevision} >= 1`),
   ],
 );
 
@@ -608,3 +654,6 @@ export type ClaimKind = (typeof claimKinds)[number];
 export type ClaimStatus = (typeof claimStatuses)[number];
 export type ClaimRelationKind = (typeof claimRelationKinds)[number];
 export type ActorKind = (typeof actorKinds)[number];
+export type SourceKind = (typeof sourceKinds)[number];
+export type SourceRelationKind = (typeof sourceRelationKinds)[number];
+export type ClaimEntityRole = (typeof claimEntityRoles)[number];

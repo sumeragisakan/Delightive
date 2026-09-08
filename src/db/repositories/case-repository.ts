@@ -12,6 +12,7 @@ import {
   reasoningBranches,
   sources,
 } from "../schema";
+import { EvidenceRepository } from "./evidence-repository";
 import { EventRepository } from "./event-repository";
 
 type CaseRow = typeof cases.$inferSelect;
@@ -367,22 +368,7 @@ export class CaseRepository {
     excerpt?: string | null;
     notes?: string;
   }): SourceRow {
-    const source = this.connection.db
-      .insert(sources)
-      .values({
-        id: randomUUID(),
-        caseId: input.caseId,
-        title: requireText(input.title, "Source title"),
-        kind: input.kind ?? "user",
-        locator: input.locator?.trim() || null,
-        excerpt: input.excerpt?.trim() || null,
-        notes: input.notes?.trim() ?? "",
-      })
-      .returning()
-      .get();
-
-    this.touchCase(input.caseId);
-    return source;
+    return new EvidenceRepository(this.connection).createSource(input);
   }
 
   private countRows(table: "people" | "events" | "claims", caseId: string) {

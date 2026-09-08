@@ -15,6 +15,13 @@
       "when": 1788825858224,
       "tag": "0001_timeline_precision_and_event_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788830189809,
+      "tag": "0002_evidence_source_revisions",
+      "breakpoints": true
     }
   ]
 }

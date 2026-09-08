@@ -15,6 +15,7 @@ import {
   events,
   reasoningBranches,
 } from "../schema";
+import { invalidateDownstreamClaims } from "../services/invalidation-service";
 
 type ClaimRow = typeof claims.$inferSelect;
 type ClaimEventRow = typeof claimEvents.$inferSelect;
@@ -207,48 +208,28 @@ export class ReasoningRepository {
           `,
         )
         .run(claimId);
-
-      const affected = this.connection.sqlite
-        .prepare(
-          `
-            with recursive affected(id) as (
-              select conclusion_claim_id
-              from claim_links
-              where premise_claim_id = ?
-              union
-              select links.conclusion_claim_id
-              from claim_links as links
-              join affected on links.premise_claim_id = affected.id
-            )
-            select id from affected
-          `,
-        )
-        .all(claimId) as Array<{ id: string }>;
-
       this.connection.sqlite
         .prepare(
           `
-            with recursive affected(id) as (
-              select conclusion_claim_id
-              from claim_links
-              where premise_claim_id = ?
-              union
-              select links.conclusion_claim_id
-              from claim_links as links
-              join affected on links.premise_claim_id = affected.id
+            update claim_sources
+            set source_revision = (
+              select revision
+              from sources
+              where sources.id = claim_sources.source_id
             )
-            update claims
-            set status = 'needs_review', updated_at = ?
-            where id in (select id from affected)
-              and kind in ('hypothesis', 'inference')
-              and status = 'accepted'
+            where claim_id = ?
           `,
         )
-        .run(claimId, updatedAt.getTime());
+        .run(claimId);
+      const invalidatedClaimIds = invalidateDownstreamClaims(
+        this.connection,
+        claimId,
+        updatedAt,
+      );
 
       return {
         claim: updated,
-        invalidatedClaimIds: affected.map(({ id }) => id),
+        invalidatedClaimIds,
       };
     });
 
