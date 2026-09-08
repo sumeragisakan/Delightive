@@ -68,8 +68,8 @@ describe("Delightive data model", () => {
       caseId: mystery.id,
       title: "钟声响起",
       timeKind: "range",
-      startOffsetMinutes: 60,
-      endOffsetMinutes: 65,
+      startOffsetSeconds: 3_600,
+      endOffsetSeconds: 3_900,
     });
 
     expect(
@@ -91,8 +91,9 @@ describe("Delightive data model", () => {
       caseRepository.createEvent({
         caseId: mystery.id,
         title: "错误时间",
-        startOffsetMinutes: 20,
-        endOffsetMinutes: 10,
+        timeKind: "range",
+        startOffsetSeconds: 20,
+        endOffsetSeconds: 10,
       }),
     ).toThrow("cannot precede");
   });

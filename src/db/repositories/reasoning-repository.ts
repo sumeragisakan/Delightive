@@ -8,13 +8,16 @@ import {
   type ClaimKind,
   type ClaimRelationKind,
   type ClaimStatus,
+  claimEvents,
   claimLinks,
   claimRevisions,
   claims,
+  events,
   reasoningBranches,
 } from "../schema";
 
 type ClaimRow = typeof claims.$inferSelect;
+type ClaimEventRow = typeof claimEvents.$inferSelect;
 type ClaimLinkRow = typeof claimLinks.$inferSelect;
 
 export class ReasoningRepository {
@@ -113,6 +116,37 @@ export class ReasoningRepository {
       .get();
   }
 
+  attachEvent(input: {
+    claimId: string;
+    eventId: string;
+    role?: ClaimEventRow["role"];
+  }): ClaimEventRow {
+    const claim = this.getClaimOrThrow(input.claimId);
+    const event = this.connection.db
+      .select()
+      .from(events)
+      .where(eq(events.id, input.eventId))
+      .get();
+
+    if (!event || event.caseId !== claim.caseId) {
+      throw new Error("Claim and event must belong to the same case.");
+    }
+    if (event.archivedAt) {
+      throw new Error("Archived events cannot be attached to claims.");
+    }
+
+    return this.connection.db
+      .insert(claimEvents)
+      .values({
+        claimId: claim.id,
+        eventId: event.id,
+        eventRevision: event.revision,
+        role: input.role ?? "context",
+      })
+      .returning()
+      .get();
+  }
+
   reviseClaim(
     claimId: string,
     input: {
@@ -159,6 +193,20 @@ export class ReasoningRepository {
         .where(eq(claims.id, claimId))
         .returning()
         .get();
+
+      this.connection.sqlite
+        .prepare(
+          `
+            update claim_events
+            set event_revision = (
+              select revision
+              from events
+              where events.id = claim_events.event_id
+            )
+            where claim_id = ?
+          `,
+        )
+        .run(claimId);
 
       const affected = this.connection.sqlite
         .prepare(

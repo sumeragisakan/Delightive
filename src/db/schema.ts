@@ -207,13 +207,14 @@ export const events = sqliteTable(
     timeKind: text("time_kind", { enum: eventTimeKinds })
       .notNull()
       .default("unknown"),
-    startOffsetMinutes: integer("start_offset_minutes"),
-    endOffsetMinutes: integer("end_offset_minutes"),
-    relativeOffsetMinutes: integer("relative_offset_minutes"),
+    startOffsetSeconds: integer("start_offset_seconds"),
+    endOffsetSeconds: integer("end_offset_seconds"),
+    relativeOffsetSeconds: integer("relative_offset_seconds"),
     displayTime: text("display_time"),
     certainty: integer("certainty"),
     sortOrder: integer("sort_order").notNull().default(0),
     revision: integer("revision").notNull().default(1),
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(nowInMilliseconds),
@@ -222,10 +223,11 @@ export const events = sqliteTable(
       .default(nowInMilliseconds),
   },
   (table) => [
-    index("events_case_time_idx").on(
+    index("events_case_timeline_idx").on(
       table.caseId,
-      table.startOffsetMinutes,
-      table.endOffsetMinutes,
+      table.archivedAt,
+      table.startOffsetSeconds,
+      table.sortOrder,
     ),
     index("events_location_idx").on(table.locationId),
     index("events_anchor_idx").on(table.anchorEventId),
@@ -235,7 +237,7 @@ export const events = sqliteTable(
     ),
     check(
       "events_range_check",
-      sql`${table.startOffsetMinutes} is null or ${table.endOffsetMinutes} is null or ${table.endOffsetMinutes} >= ${table.startOffsetMinutes}`,
+      sql`${table.startOffsetSeconds} is null or ${table.endOffsetSeconds} is null or ${table.endOffsetSeconds} >= ${table.startOffsetSeconds}`,
     ),
     check(
       "events_certainty_check",
@@ -273,6 +275,36 @@ export const eventParticipants = sqliteTable(
     check(
       "event_participants_presence_check",
       sql`${table.presence} in ('confirmed', 'claimed', 'possible', 'denied')`,
+    ),
+  ],
+);
+
+export const eventRevisions = sqliteTable(
+  "event_revisions",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    snapshot: text("snapshot").notNull(),
+    changedBy: text("changed_by", { enum: actorKinds })
+      .notNull()
+      .default("user"),
+    changedAt: integer("changed_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+  },
+  (table) => [
+    uniqueIndex("event_revisions_event_revision_unique").on(
+      table.eventId,
+      table.revision,
+    ),
+    index("event_revisions_event_idx").on(table.eventId),
+    check("event_revisions_revision_check", sql`${table.revision} >= 1`),
+    check(
+      "event_revisions_changed_by_check",
+      sql`${table.changedBy} in ('user', 'ai')`,
     ),
   ],
 );
@@ -545,11 +577,13 @@ export const claimEvents = sqliteTable(
     eventId: text("event_id")
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }),
+    eventRevision: integer("event_revision").notNull().default(1),
     role: text("role", { enum: claimEntityRoles }).notNull().default("context"),
   },
   (table) => [
     primaryKey({ columns: [table.claimId, table.eventId, table.role] }),
     index("claim_events_event_idx").on(table.eventId),
+    check("claim_events_revision_check", sql`${table.eventRevision} >= 1`),
   ],
 );
 

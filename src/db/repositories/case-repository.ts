@@ -12,6 +12,7 @@ import {
   reasoningBranches,
   sources,
 } from "../schema";
+import { EventRepository } from "./event-repository";
 
 type CaseRow = typeof cases.$inferSelect;
 type PersonRow = typeof people.$inferSelect;
@@ -298,45 +299,14 @@ export class CaseRepository {
     locationId?: string | null;
     anchorEventId?: string | null;
     timeKind?: EventRow["timeKind"];
-    startOffsetMinutes?: number | null;
-    endOffsetMinutes?: number | null;
-    relativeOffsetMinutes?: number | null;
+    startOffsetSeconds?: number | null;
+    endOffsetSeconds?: number | null;
+    relativeOffsetSeconds?: number | null;
     displayTime?: string | null;
     certainty?: number | null;
     sortOrder?: number;
   }): EventRow {
-    if (
-      input.startOffsetMinutes != null &&
-      input.endOffsetMinutes != null &&
-      input.endOffsetMinutes < input.startOffsetMinutes
-    ) {
-      throw new Error("Event end time cannot precede its start time.");
-    }
-
-    assertPercentage(input.certainty, "Event certainty");
-
-    const event = this.connection.db
-      .insert(events)
-      .values({
-        id: randomUUID(),
-        caseId: input.caseId,
-        title: requireText(input.title, "Event title"),
-        description: input.description?.trim() ?? "",
-        locationId: input.locationId ?? null,
-        anchorEventId: input.anchorEventId ?? null,
-        timeKind: input.timeKind ?? "unknown",
-        startOffsetMinutes: input.startOffsetMinutes ?? null,
-        endOffsetMinutes: input.endOffsetMinutes ?? null,
-        relativeOffsetMinutes: input.relativeOffsetMinutes ?? null,
-        displayTime: input.displayTime?.trim() || null,
-        certainty: input.certainty ?? null,
-        sortOrder: input.sortOrder ?? 0,
-      })
-      .returning()
-      .get();
-
-    this.touchCase(input.caseId);
-    return event;
+    return new EventRepository(this.connection).createEvent(input);
   }
 
   addEventParticipant(input: {
@@ -345,40 +315,9 @@ export class CaseRepository {
     role?: EventParticipantRow["role"];
     presence?: EventParticipantRow["presence"];
     notes?: string;
-  }): EventParticipantRow {
-    const event = this.connection.db
-      .select({ caseId: events.caseId })
-      .from(events)
-      .where(eq(events.id, input.eventId))
-      .get();
-    const person = this.connection.db
-      .select({ caseId: people.caseId })
-      .from(people)
-      .where(eq(people.id, input.personId))
-      .get();
-
-    if (!event || !person) {
-      throw new Error("Event and person must both exist.");
-    }
-
-    if (event.caseId !== person.caseId) {
-      throw new Error("Event and person must belong to the same case.");
-    }
-
-    const participant = this.connection.db
-      .insert(eventParticipants)
-      .values({
-        eventId: input.eventId,
-        personId: input.personId,
-        role: input.role ?? "present",
-        presence: input.presence ?? "confirmed",
-        notes: input.notes?.trim() ?? "",
-      })
-      .returning()
-      .get();
-
-    this.touchCase(event.caseId);
-    return participant;
+  }) {
+    return new EventRepository(this.connection).addParticipant(input)
+      .participant;
   }
 
   createBranch(input: {
@@ -475,10 +414,4 @@ function requireText(value: string, label: string) {
 
 function normalizeAlias(alias: string) {
   return alias.normalize("NFKC").toLocaleLowerCase();
-}
-
-function assertPercentage(value: number | null | undefined, label: string) {
-  if (value != null && (!Number.isInteger(value) || value < 0 || value > 100)) {
-    throw new Error(`${label} must be an integer between 0 and 100.`);
-  }
 }
