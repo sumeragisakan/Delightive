@@ -7,11 +7,15 @@ import { CaseRepository } from "@/db/repositories/case-repository";
 import { EvidenceRepository } from "@/db/repositories/evidence-repository";
 import { EventRepository } from "@/db/repositories/event-repository";
 import { LocationRepository } from "@/db/repositories/location-repository";
+import { ReasoningWorkspaceRepository } from "@/db/repositories/reasoning-workspace-repository";
 
 const caseRepository = new CaseRepository(databaseConnection);
 const evidenceRepository = new EvidenceRepository(databaseConnection);
 const eventRepository = new EventRepository(databaseConnection);
 const locationRepository = new LocationRepository(databaseConnection);
+const reasoningWorkspaceRepository = new ReasoningWorkspaceRepository(
+  databaseConnection,
+);
 
 export async function getCaseDashboard() {
   await connection();
@@ -48,5 +52,22 @@ export async function getEvidenceWorkspace(caseId: string) {
     locations: locationRepository.listLocations(caseId),
     people: caseRepository.listPeople(caseId),
     sources: evidenceRepository.listSources(caseId),
+  };
+}
+
+export async function getReasoningWorkspace(
+  caseId: string,
+  branchId?: string | null,
+) {
+  await connection();
+  const caseFile = caseRepository.getCaseSummary(caseId);
+
+  if (!caseFile) {
+    return { caseFile, workspace: null };
+  }
+
+  return {
+    caseFile,
+    workspace: reasoningWorkspaceRepository.getWorkspace(caseId, branchId),
   };
 }

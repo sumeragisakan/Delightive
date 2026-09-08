@@ -8,7 +8,7 @@ export function CaseWorkspaceFrame({
   caseFile,
   children,
 }: {
-  activeModule: "evidence" | "people" | "timeline";
+  activeModule: "evidence" | "people" | "reasoning" | "timeline";
   aside: React.ReactNode;
   caseFile: CaseSummary;
   children: React.ReactNode;
@@ -88,9 +88,12 @@ export function CaseWorkspaceFrame({
           >
             事实与来源
           </WorkspaceLink>
-          <span className="workspace-tab" title="将在后续阶段开放">
-            推理 · 待开放
-          </span>
+          <WorkspaceLink
+            active={activeModule === "reasoning"}
+            href={`/cases/${caseFile.id}/reasoning`}
+          >
+            推理
+          </WorkspaceLink>
         </nav>
 
         <div className="grid lg:grid-cols-[minmax(0,1fr)_23rem]">

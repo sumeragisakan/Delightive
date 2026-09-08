@@ -10,6 +10,7 @@ import { CaseRepository } from "@/db/repositories/case-repository";
 import { EvidenceRepository } from "@/db/repositories/evidence-repository";
 import { EventRepository } from "@/db/repositories/event-repository";
 import { LocationRepository } from "@/db/repositories/location-repository";
+import { ReasoningWorkspaceRepository } from "@/db/repositories/reasoning-workspace-repository";
 import type {
   ClaimEntityRole,
   SourceRelationKind,
@@ -19,6 +20,9 @@ const caseRepository = new CaseRepository(databaseConnection);
 const evidenceRepository = new EvidenceRepository(databaseConnection);
 const eventRepository = new EventRepository(databaseConnection);
 const locationRepository = new LocationRepository(databaseConnection);
+const reasoningWorkspaceRepository = new ReasoningWorkspaceRepository(
+  databaseConnection,
+);
 
 const caseSchema = z.object({
   description: z.string().trim().max(2_000, "案件说明不能超过 2000 个字符。"),
@@ -281,6 +285,51 @@ const sourceLinkSchema = z.object({
 const entityLinkSchema = z.object({
   entityId: z.string().trim().min(1, "请选择关联对象。"),
   role: claimEntityRoleSchema,
+});
+
+const branchSchema = z.object({
+  description: z.string().trim().max(2_000, "分支说明不能超过 2000 个字符。"),
+  name: z
+    .string()
+    .trim()
+    .min(1, "请输入分支名称。")
+    .max(120, "分支名称不能超过 120 个字符。"),
+  parentBranchId: optionalIdSchema,
+});
+
+const reasoningClaimSchema = z.object({
+  confidence: optionalPercentageSchema,
+  content: z
+    .string()
+    .trim()
+    .min(1, "请输入假设内容。")
+    .max(8_000, "假设内容不能超过 8000 个字符。"),
+});
+
+const argumentSchema = z.object({
+  premiseClaimId: z.string().trim().min(1, "请选择一条前提。"),
+  rationale: z.string().trim().max(2_000, "关系说明不能超过 2000 个字符。"),
+  relation: z.enum(["supports", "contradicts", "depends_on", "qualifies"], {
+    error: "请选择有效的论证关系。",
+  }),
+  strength: optionalPercentageSchema,
+});
+
+const reviewSchema = z.object({
+  note: z.string().trim().max(2_000, "审查说明不能超过 2000 个字符。"),
+});
+
+const conflictReviewSchema = reviewSchema.extend({
+  decision: z.enum(
+    [
+      "retained",
+      "prefer_premise",
+      "prefer_conclusion",
+      "both_review",
+      "dismissed",
+    ],
+    { error: "请选择有效的冲突处置。" },
+  ),
 });
 
 export async function createCaseAction(
@@ -892,11 +941,293 @@ export async function removeClaimLocationAction(
   revalidateCase(caseId);
 }
 
+export async function createReasoningBranchAction(
+  caseId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = branchSchema.safeParse(readBranchForm(formData));
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查分支信息。");
+  }
+
+  try {
+    reasoningWorkspaceRepository.createBranch({ caseId, ...parsed.data });
+  } catch (error) {
+    return reasoningFailure(error, "无法创建推理分支；请检查名称和上级分支。");
+  }
+  revalidateCase(caseId);
+  return { message: "推理分支已创建。", status: "success" };
+}
+
+export async function updateReasoningBranchAction(
+  caseId: string,
+  branchId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = branchSchema.safeParse(readBranchForm(formData));
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查分支信息。");
+  }
+
+  try {
+    reasoningWorkspaceRepository.updateBranch(caseId, branchId, parsed.data);
+  } catch (error) {
+    return reasoningFailure(error, "无法保存分支；请检查名称和层级。");
+  }
+  revalidateCase(caseId);
+  return { message: "分支信息已保存。", status: "success" };
+}
+
+export async function setReasoningBranchArchivedAction(
+  caseId: string,
+  branchId: string,
+  archived: boolean,
+  _previousState: ActionState,
+  _formData: FormData,
+): Promise<ActionState> {
+  void _previousState;
+  void _formData;
+  try {
+    reasoningWorkspaceRepository.setBranchArchived(caseId, branchId, archived);
+  } catch (error) {
+    return reasoningFailure(error, "无法变更分支状态；请先处理活动子分支。");
+  }
+  revalidateCase(caseId);
+  return {
+    message: archived ? "分支已归档。" : "分支已恢复。",
+    status: "success",
+  };
+}
+
+export async function createHypothesisAction(
+  caseId: string,
+  branchId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = reasoningClaimSchema.safeParse(readReasoningClaimForm(formData));
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查假设内容。");
+  }
+
+  try {
+    reasoningWorkspaceRepository.createHypothesis({
+      branchId,
+      caseId,
+      ...parsed.data,
+    });
+  } catch (error) {
+    return reasoningFailure(error, "无法添加假设。");
+  }
+  revalidateCase(caseId);
+  return { message: "假设已加入当前分支。", status: "success" };
+}
+
+export async function updateReasoningClaimAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = reasoningClaimSchema.safeParse(readReasoningClaimForm(formData));
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查推理内容。");
+  }
+
+  try {
+    reasoningWorkspaceRepository.reviseReasoningClaim(caseId, claimId, parsed.data);
+  } catch (error) {
+    return reasoningFailure(error, "无法保存推理内容。");
+  }
+  revalidateCase(caseId);
+  return {
+    message: "推理内容已保存；原可信推论会转入待复核。",
+    status: "success",
+  };
+}
+
+export async function addReasoningArgumentAction(
+  caseId: string,
+  conclusionClaimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = argumentSchema.safeParse({
+    premiseClaimId: readText(formData, "premiseClaimId"),
+    rationale: readText(formData, "rationale"),
+    relation: readText(formData, "relation"),
+    strength: readText(formData, "strength"),
+  });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查论证关系。");
+  }
+
+  try {
+    reasoningWorkspaceRepository.addArgument({
+      caseId,
+      conclusionClaimId,
+      ...parsed.data,
+    });
+  } catch (error) {
+    return reasoningFailure(error, "无法添加论证关系。");
+  }
+  revalidateCase(caseId);
+  return { message: "论证关系已添加。", status: "success" };
+}
+
+export async function removeReasoningArgumentAction(
+  caseId: string,
+  linkId: string,
+  _previousState: ActionState,
+  _formData: FormData,
+): Promise<ActionState> {
+  void _previousState;
+  void _formData;
+  try {
+    reasoningWorkspaceRepository.removeArgument(caseId, linkId);
+  } catch (error) {
+    return reasoningFailure(error, "无法移除论证关系。");
+  }
+  revalidateCase(caseId);
+  return { message: "论证关系已移除。", status: "success" };
+}
+
+export async function promoteHypothesisAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = reviewSchema.safeParse({ note: readText(formData, "note") });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查审查说明。");
+  }
+  try {
+    reasoningWorkspaceRepository.promoteHypothesis(
+      caseId,
+      claimId,
+      parsed.data.note,
+    );
+  } catch (error) {
+    return reasoningFailure(error, "当前假设尚未满足晋升条件。");
+  }
+  revalidateCase(caseId);
+  return { message: "假设已晋升为可信推论。", status: "success" };
+}
+
+export async function reconfirmInferenceAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = reviewSchema.safeParse({ note: readText(formData, "note") });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查复核说明。");
+  }
+  try {
+    reasoningWorkspaceRepository.reconfirmInference(
+      caseId,
+      claimId,
+      parsed.data.note,
+    );
+  } catch (error) {
+    return reasoningFailure(error, "这条推论目前无法重新接受。");
+  }
+  revalidateCase(caseId);
+  return { message: "推论已按当前前提重新确认。", status: "success" };
+}
+
+export async function demoteInferenceAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = reviewSchema.safeParse({ note: readText(formData, "note") });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查复核说明。");
+  }
+  try {
+    reasoningWorkspaceRepository.demoteInference(caseId, claimId, parsed.data.note);
+  } catch (error) {
+    return reasoningFailure(error, "无法将这条推论转入待复核。");
+  }
+  revalidateCase(caseId);
+  return { message: "推论已转入待复核。", status: "success" };
+}
+
+export async function rejectReasoningClaimAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = reviewSchema.safeParse({ note: readText(formData, "note") });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查否定说明。");
+  }
+  try {
+    reasoningWorkspaceRepository.rejectReasoningClaim(
+      caseId,
+      claimId,
+      parsed.data.note,
+    );
+  } catch (error) {
+    return reasoningFailure(error, "无法否定这条推理。");
+  }
+  revalidateCase(caseId);
+  return { message: "这条推理已标记为否定。", status: "success" };
+}
+
+export async function reviewReasoningConflictAction(
+  caseId: string,
+  linkId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = conflictReviewSchema.safeParse({
+    decision: readText(formData, "decision"),
+    note: readText(formData, "note"),
+  });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查冲突处置。");
+  }
+  try {
+    reasoningWorkspaceRepository.reviewConflict({
+      caseId,
+      linkId,
+      ...parsed.data,
+    });
+  } catch (error) {
+    return reasoningFailure(error, "无法记录冲突处置。");
+  }
+  revalidateCase(caseId);
+  return { message: "冲突处置已记录。", status: "success" };
+}
+
 function readCaseForm(formData: FormData) {
   return {
     description: readText(formData, "description"),
     timelineMode: readText(formData, "timelineMode"),
     title: readText(formData, "title"),
+  };
+}
+
+function readBranchForm(formData: FormData) {
+  return {
+    description: readText(formData, "description"),
+    name: readText(formData, "name"),
+    parentBranchId: readText(formData, "parentBranchId"),
+  };
+}
+
+function readReasoningClaimForm(formData: FormData) {
+  return {
+    confidence: readText(formData, "confidence"),
+    content: readText(formData, "content"),
   };
 }
 
@@ -991,6 +1322,14 @@ function persistenceFailure(error: unknown, fallback: string): ActionState {
   return { message: fallback, status: "error" };
 }
 
+function reasoningFailure(error: unknown, fallback: string): ActionState {
+  const safeMessage =
+    error instanceof Error && /[\u3400-\u9fff]/u.test(error.message)
+      ? error.message
+      : fallback;
+  return persistenceFailure(error, safeMessage);
+}
+
 function linkFailure(error: unknown, label: string): ActionState {
   const fallback =
     error instanceof Error && error.message.includes("UNIQUE constraint")
@@ -1004,6 +1343,7 @@ function revalidateCase(caseId: string) {
   revalidatePath(`/cases/${caseId}`);
   revalidatePath(`/cases/${caseId}/timeline`);
   revalidatePath(`/cases/${caseId}/evidence`);
+  revalidatePath(`/cases/${caseId}/reasoning`);
 }
 
 function parseDuration(value: string) {

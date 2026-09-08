@@ -157,3 +157,75 @@ describe("evidence migration", () => {
     }
   });
 });
+
+describe("reasoning review migration", () => {
+  it("preserves existing branches, claims, and argument links", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    try {
+      runMigration(sqlite, "0000_initial_schema.sql");
+      runMigration(sqlite, "0001_timeline_precision_and_event_revisions.sql");
+      runMigration(sqlite, "0002_evidence_source_revisions.sql");
+      sqlite.prepare("insert into cases (id, title) values (?, ?)").run(
+        "case-1",
+        "旧推理案件",
+      );
+      sqlite
+        .prepare(
+          "insert into reasoning_branches (id, case_id, name) values (?, ?, ?)",
+        )
+        .run("branch-1", "case-1", "原有分支");
+      sqlite
+        .prepare(
+          `insert into claims (id, case_id, branch_id, kind, status, content)
+           values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "claim-1",
+          "case-1",
+          null,
+          "fact",
+          "accepted",
+          "门已锁",
+          "claim-2",
+          "case-1",
+          "branch-1",
+          "hypothesis",
+          "draft",
+          "无人从门离开",
+        );
+      sqlite
+        .prepare(
+          `insert into claim_links (
+            id, premise_claim_id, conclusion_claim_id, relation, premise_revision
+          ) values (?, ?, ?, ?, ?)`,
+        )
+        .run("link-1", "claim-1", "claim-2", "supports", 1);
+
+      runMigration(sqlite, "0003_reasoning_reviews_and_conflicts.sql");
+
+      expect(
+        sqlite.prepare("select name from reasoning_branches where id = ?").pluck().get(
+          "branch-1",
+        ),
+      ).toBe("原有分支");
+      expect(
+        sqlite.prepare("select relation from claim_links where id = ?").pluck().get(
+          "link-1",
+        ),
+      ).toBe("supports");
+      expect(
+        sqlite
+          .prepare(
+            "select name from sqlite_master where type = 'table' and name = ?",
+          )
+          .pluck()
+          .get("claim_reviews"),
+      ).toBe("claim_reviews");
+      expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+});

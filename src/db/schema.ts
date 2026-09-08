@@ -69,6 +69,19 @@ export const claimRelationKinds = [
   "depends_on",
   "qualifies",
 ] as const;
+export const claimReviewDecisionKinds = [
+  "promoted",
+  "reconfirmed",
+  "demoted",
+  "rejected",
+] as const;
+export const conflictDecisionKinds = [
+  "retained",
+  "prefer_premise",
+  "prefer_conclusion",
+  "both_review",
+  "dismissed",
+] as const;
 export const claimEntityRoles = [
   "subject",
   "object",
@@ -597,6 +610,86 @@ export const claimRevisions = sqliteTable(
   ],
 );
 
+export const claimReviews = sqliteTable(
+  "claim_reviews",
+  {
+    id: text("id").primaryKey(),
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => claims.id, { onDelete: "cascade" }),
+    claimRevision: integer("claim_revision").notNull(),
+    decision: text("decision", { enum: claimReviewDecisionKinds }).notNull(),
+    premiseSnapshot: text("premise_snapshot").notNull().default("[]"),
+    note: text("note").notNull().default(""),
+    reviewedBy: text("reviewed_by", { enum: actorKinds })
+      .notNull()
+      .default("user"),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+  },
+  (table) => [
+    index("claim_reviews_claim_history_idx").on(
+      table.claimId,
+      table.reviewedAt,
+    ),
+    check(
+      "claim_reviews_decision_check",
+      sql`${table.decision} in ('promoted', 'reconfirmed', 'demoted', 'rejected')`,
+    ),
+    check(
+      "claim_reviews_actor_check",
+      sql`${table.reviewedBy} in ('user', 'ai')`,
+    ),
+    check(
+      "claim_reviews_revision_check",
+      sql`${table.claimRevision} >= 1`,
+    ),
+  ],
+);
+
+export const contradictionReviews = sqliteTable(
+  "contradiction_reviews",
+  {
+    id: text("id").primaryKey(),
+    claimLinkId: text("claim_link_id")
+      .notNull()
+      .references(() => claimLinks.id, { onDelete: "cascade" }),
+    premiseRevision: integer("premise_revision").notNull(),
+    conclusionRevision: integer("conclusion_revision").notNull(),
+    decision: text("decision", { enum: conflictDecisionKinds }).notNull(),
+    note: text("note").notNull().default(""),
+    reviewedBy: text("reviewed_by", { enum: actorKinds })
+      .notNull()
+      .default("user"),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+  },
+  (table) => [
+    index("contradiction_reviews_link_history_idx").on(
+      table.claimLinkId,
+      table.reviewedAt,
+    ),
+    check(
+      "contradiction_reviews_decision_check",
+      sql`${table.decision} in ('retained', 'prefer_premise', 'prefer_conclusion', 'both_review', 'dismissed')`,
+    ),
+    check(
+      "contradiction_reviews_premise_revision_check",
+      sql`${table.premiseRevision} >= 1`,
+    ),
+    check(
+      "contradiction_reviews_conclusion_revision_check",
+      sql`${table.conclusionRevision} >= 1`,
+    ),
+    check(
+      "contradiction_reviews_actor_check",
+      sql`${table.reviewedBy} in ('user', 'ai')`,
+    ),
+  ],
+);
+
 export const claimPeople = sqliteTable(
   "claim_people",
   {
@@ -653,6 +746,8 @@ export const claimLocations = sqliteTable(
 export type ClaimKind = (typeof claimKinds)[number];
 export type ClaimStatus = (typeof claimStatuses)[number];
 export type ClaimRelationKind = (typeof claimRelationKinds)[number];
+export type ClaimReviewDecision = (typeof claimReviewDecisionKinds)[number];
+export type ConflictDecision = (typeof conflictDecisionKinds)[number];
 export type ActorKind = (typeof actorKinds)[number];
 export type SourceKind = (typeof sourceKinds)[number];
 export type SourceRelationKind = (typeof sourceRelationKinds)[number];

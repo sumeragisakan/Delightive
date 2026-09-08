@@ -22,6 +22,13 @@
       "when": 1788830189809,
       "tag": "0002_evidence_source_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788840248302,
+      "tag": "0003_reasoning_reviews_and_conflicts",
+      "breakpoints": true
     }
   ]
 }
