@@ -412,6 +412,83 @@ textarea:focus-visible {
   padding: 0.85rem;
 }
 
+.evidence-composer {
+  border: 1px solid rgba(154, 56, 46, 0.24);
+  border-radius: 1rem;
+  background: rgba(154, 56, 46, 0.045);
+  padding: 1.25rem;
+}
+
+.evidence-create-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.source-summary,
+.evidence-card {
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.58);
+  padding: 1.15rem;
+  box-shadow: 0 8px 28px rgba(24, 32, 37, 0.035);
+}
+
+.source-excerpt {
+  margin-top: 0.8rem;
+  border-left: 2px solid rgba(154, 56, 46, 0.35);
+  padding-left: 0.8rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.evidence-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.3rem 0.62rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.evidence-status-accepted {
+  background: rgba(49, 104, 75, 0.11);
+  color: var(--success);
+}
+
+.evidence-status-draft,
+.evidence-status-superseded {
+  background: rgba(98, 106, 109, 0.1);
+  color: var(--muted);
+}
+
+.evidence-status-needs_review {
+  background: rgba(181, 138, 50, 0.15);
+  color: #7b5a18;
+}
+
+.evidence-status-rejected {
+  background: rgba(163, 49, 42, 0.09);
+  color: var(--danger);
+}
+
+.evidence-link {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper-deep);
+  padding: 0.38rem 0.68rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.evidence-link-stale {
+  border-color: rgba(181, 138, 50, 0.48);
+  background: rgba(181, 138, 50, 0.12);
+  color: #6f5118;
+}
+
 .form-message {
   border-radius: 0.7rem;
   padding: 0.7rem 0.85rem;

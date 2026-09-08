@@ -7,10 +7,16 @@ import { z } from "zod";
 import type { ActionState } from "./action-state";
 import { databaseConnection } from "@/db/client";
 import { CaseRepository } from "@/db/repositories/case-repository";
+import { EvidenceRepository } from "@/db/repositories/evidence-repository";
 import { EventRepository } from "@/db/repositories/event-repository";
 import { LocationRepository } from "@/db/repositories/location-repository";
+import type {
+  ClaimEntityRole,
+  SourceRelationKind,
+} from "@/db/schema";
 
 const caseRepository = new CaseRepository(databaseConnection);
+const evidenceRepository = new EvidenceRepository(databaseConnection);
 const eventRepository = new EventRepository(databaseConnection);
 const locationRepository = new LocationRepository(databaseConnection);
 
@@ -176,6 +182,105 @@ const participantSchema = z.object({
     ["actor", "witness", "victim", "present", "mentioned", "other"],
     { error: "请选择有效的参与角色。" },
   ),
+});
+
+const sourceKindSchema = z.enum(
+  ["narration", "chapter", "statement", "document", "image", "user", "other"],
+  { error: "请选择有效的来源类型。" },
+);
+const sourceRelationSchema = z.enum(["origin", "supports", "contradicts"], {
+  error: "请选择有效的来源关系。",
+});
+const claimEntityRoleSchema = z.enum(
+  ["subject", "object", "speaker", "context", "mentioned"],
+  { error: "请选择有效的关联角色。" },
+);
+const evidenceStatusSchema = z.enum(
+  ["draft", "accepted", "rejected", "needs_review", "superseded"],
+  { error: "请选择有效的事实状态。" },
+);
+
+const sourceSchema = z.object({
+  excerpt: z
+    .string()
+    .trim()
+    .max(8_000, "来源摘录不能超过 8000 个字符。")
+    .transform((value) => value || null),
+  kind: sourceKindSchema,
+  locator: z
+    .string()
+    .trim()
+    .max(300, "来源定位不能超过 300 个字符。")
+    .transform((value) => value || null),
+  notes: z.string().trim().max(4_000, "来源备注不能超过 4000 个字符。"),
+  title: z
+    .string()
+    .trim()
+    .min(1, "请输入来源标题。")
+    .max(160, "来源标题不能超过 160 个字符。"),
+});
+
+const evidenceClaimSchema = z
+  .object({
+    confidence: optionalPercentageSchema,
+    content: z
+      .string()
+      .trim()
+      .min(1, "请输入事实或陈述内容。")
+      .max(8_000, "内容不能超过 8000 个字符。"),
+    eventId: optionalIdSchema,
+    eventRole: claimEntityRoleSchema,
+    kind: z.enum(["fact", "statement"], {
+      error: "请选择事实或人物陈述。",
+    }),
+    locationId: optionalIdSchema,
+    locationRole: claimEntityRoleSchema,
+    personId: optionalIdSchema,
+    personRole: claimEntityRoleSchema,
+    sourceId: optionalIdSchema,
+    sourceRelation: sourceRelationSchema,
+    speakerPersonId: optionalIdSchema,
+    status: evidenceStatusSchema,
+  })
+  .superRefine((claim, context) => {
+    if (
+      claim.status === "accepted" &&
+      (!claim.sourceId || claim.sourceRelation === "contradicts")
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "确认事实前，请关联一条原始或支持来源。",
+        path: ["sourceId"],
+      });
+    }
+    if (claim.kind === "fact" && claim.speakerPersonId) {
+      context.addIssue({
+        code: "custom",
+        message: "只有人物陈述可以指定发言者。",
+        path: ["speakerPersonId"],
+      });
+    }
+  });
+
+const evidenceClaimUpdateSchema = z.object({
+  confidence: optionalPercentageSchema,
+  content: z
+    .string()
+    .trim()
+    .min(1, "请输入事实或陈述内容。")
+    .max(8_000, "内容不能超过 8000 个字符。"),
+  speakerPersonId: optionalIdSchema,
+  status: evidenceStatusSchema,
+});
+
+const sourceLinkSchema = z.object({
+  relation: sourceRelationSchema,
+  sourceId: z.string().trim().min(1, "请选择来源。"),
+});
+
+const entityLinkSchema = z.object({
+  entityId: z.string().trim().min(1, "请选择关联对象。"),
+  role: claimEntityRoleSchema,
 });
 
 export async function createCaseAction(
@@ -505,6 +610,288 @@ export async function removeEventParticipantAction(
   revalidateCase(caseId);
 }
 
+export async function createSourceAction(
+  caseId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = sourceSchema.safeParse(readSourceForm(formData));
+
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查来源信息。");
+  }
+
+  try {
+    evidenceRepository.createSource({ caseId, ...parsed.data });
+  } catch (error) {
+    return persistenceFailure(error, "无法添加来源。");
+  }
+
+  revalidateCase(caseId);
+  return { message: "来源已加入案件。", status: "success" };
+}
+
+export async function updateSourceAction(
+  caseId: string,
+  sourceId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = sourceSchema.safeParse(readSourceForm(formData));
+
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查来源信息。");
+  }
+
+  try {
+    evidenceRepository.updateSource(caseId, sourceId, parsed.data);
+  } catch (error) {
+    return persistenceFailure(error, "无法保存来源。");
+  }
+
+  revalidateCase(caseId);
+  return {
+    message: "来源已保存；依赖它的内容会在需要时标记为待复核。",
+    status: "success",
+  };
+}
+
+export async function setSourceArchivedAction(
+  caseId: string,
+  sourceId: string,
+  archived: boolean,
+) {
+  evidenceRepository.setSourceArchived(caseId, sourceId, archived);
+  revalidateCase(caseId);
+}
+
+export async function createEvidenceClaimAction(
+  caseId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = evidenceClaimSchema.safeParse(readEvidenceClaimForm(formData));
+
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查事实信息。");
+  }
+
+  try {
+    evidenceRepository.createEvidenceClaim({ caseId, ...parsed.data });
+  } catch (error) {
+    return persistenceFailure(error, "无法添加事实；请检查来源和关联对象。");
+  }
+
+  revalidateCase(caseId);
+  return { message: "内容已加入事实层。", status: "success" };
+}
+
+export async function updateEvidenceClaimAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = evidenceClaimUpdateSchema.safeParse({
+    confidence: readText(formData, "confidence"),
+    content: readText(formData, "content"),
+    speakerPersonId: readText(formData, "speakerPersonId"),
+    status: readText(formData, "status"),
+  });
+
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查事实信息。");
+  }
+
+  try {
+    evidenceRepository.updateEvidenceClaim(caseId, claimId, parsed.data);
+  } catch (error) {
+    return persistenceFailure(
+      error,
+      "无法保存；已确认内容必须保留至少一条有效来源。",
+    );
+  }
+
+  revalidateCase(caseId);
+  return {
+    message: "内容已保存；下游推理会在需要时标记为待复核。",
+    status: "success",
+  };
+}
+
+export async function setEvidenceClaimArchivedAction(
+  caseId: string,
+  claimId: string,
+  archived: boolean,
+) {
+  evidenceRepository.setClaimArchived(caseId, claimId, archived);
+  revalidateCase(caseId);
+}
+
+export async function addClaimSourceAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = sourceLinkSchema.safeParse({
+    relation: readText(formData, "relation"),
+    sourceId: readText(formData, "sourceId"),
+  });
+
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查来源关联。");
+  }
+
+  try {
+    evidenceRepository.addSourceLink({ caseId, claimId, ...parsed.data });
+  } catch (error) {
+    const fallback =
+      error instanceof Error && error.message.includes("UNIQUE constraint")
+        ? "这条来源关系已经存在。"
+        : "无法关联来源。";
+    return persistenceFailure(error, fallback);
+  }
+
+  revalidateCase(caseId);
+  return { message: "来源已关联。", status: "success" };
+}
+
+export async function removeClaimSourceAction(
+  caseId: string,
+  claimId: string,
+  sourceId: string,
+  relation: SourceRelationKind,
+) {
+  evidenceRepository.removeSourceLink({
+    caseId,
+    claimId,
+    relation,
+    sourceId,
+  });
+  revalidateCase(caseId);
+}
+
+export async function addClaimEventAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = entityLinkSchema.safeParse({
+    entityId: readText(formData, "entityId"),
+    role: readText(formData, "role"),
+  });
+
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查事件关联。");
+  }
+
+  try {
+    evidenceRepository.addEventLink({
+      caseId,
+      claimId,
+      eventId: parsed.data.entityId,
+      role: parsed.data.role,
+    });
+  } catch (error) {
+    return linkFailure(error, "事件");
+  }
+
+  revalidateCase(caseId);
+  return { message: "事件已关联。", status: "success" };
+}
+
+export async function removeClaimEventAction(
+  caseId: string,
+  claimId: string,
+  eventId: string,
+  role: ClaimEntityRole,
+) {
+  evidenceRepository.removeEventLink({ caseId, claimId, eventId, role });
+  revalidateCase(caseId);
+}
+
+export async function addClaimPersonAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = entityLinkSchema.safeParse({
+    entityId: readText(formData, "entityId"),
+    role: readText(formData, "role"),
+  });
+
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查人物关联。");
+  }
+
+  try {
+    evidenceRepository.addPersonLink({
+      caseId,
+      claimId,
+      personId: parsed.data.entityId,
+      role: parsed.data.role,
+    });
+  } catch (error) {
+    return linkFailure(error, "人物");
+  }
+
+  revalidateCase(caseId);
+  return { message: "人物已关联。", status: "success" };
+}
+
+export async function removeClaimPersonAction(
+  caseId: string,
+  claimId: string,
+  personId: string,
+  role: ClaimEntityRole,
+) {
+  evidenceRepository.removePersonLink({ caseId, claimId, personId, role });
+  revalidateCase(caseId);
+}
+
+export async function addClaimLocationAction(
+  caseId: string,
+  claimId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = entityLinkSchema.safeParse({
+    entityId: readText(formData, "entityId"),
+    role: readText(formData, "role"),
+  });
+
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查地点关联。");
+  }
+
+  try {
+    evidenceRepository.addLocationLink({
+      caseId,
+      claimId,
+      locationId: parsed.data.entityId,
+      role: parsed.data.role,
+    });
+  } catch (error) {
+    return linkFailure(error, "地点");
+  }
+
+  revalidateCase(caseId);
+  return { message: "地点已关联。", status: "success" };
+}
+
+export async function removeClaimLocationAction(
+  caseId: string,
+  claimId: string,
+  locationId: string,
+  role: ClaimEntityRole,
+) {
+  evidenceRepository.removeLocationLink({ caseId, claimId, locationId, role });
+  revalidateCase(caseId);
+}
+
 function readCaseForm(formData: FormData) {
   return {
     description: readText(formData, "description"),
@@ -527,6 +914,34 @@ function readLocationForm(formData: FormData) {
     name: readText(formData, "name"),
     parentLocationId: readText(formData, "parentLocationId"),
     sortOrder: readText(formData, "sortOrder"),
+  };
+}
+
+function readSourceForm(formData: FormData) {
+  return {
+    excerpt: readText(formData, "excerpt"),
+    kind: readText(formData, "kind"),
+    locator: readText(formData, "locator"),
+    notes: readText(formData, "notes"),
+    title: readText(formData, "title"),
+  };
+}
+
+function readEvidenceClaimForm(formData: FormData) {
+  return {
+    confidence: readText(formData, "confidence"),
+    content: readText(formData, "content"),
+    eventId: readText(formData, "eventId"),
+    eventRole: readText(formData, "eventRole"),
+    kind: readText(formData, "kind"),
+    locationId: readText(formData, "locationId"),
+    locationRole: readText(formData, "locationRole"),
+    personId: readText(formData, "personId"),
+    personRole: readText(formData, "personRole"),
+    sourceId: readText(formData, "sourceId"),
+    sourceRelation: readText(formData, "sourceRelation"),
+    speakerPersonId: readText(formData, "speakerPersonId"),
+    status: readText(formData, "status"),
   };
 }
 
@@ -576,10 +991,19 @@ function persistenceFailure(error: unknown, fallback: string): ActionState {
   return { message: fallback, status: "error" };
 }
 
+function linkFailure(error: unknown, label: string): ActionState {
+  const fallback =
+    error instanceof Error && error.message.includes("UNIQUE constraint")
+      ? `这条${label}关系已经存在。`
+      : `无法关联${label}。`;
+  return persistenceFailure(error, fallback);
+}
+
 function revalidateCase(caseId: string) {
   revalidatePath("/");
   revalidatePath(`/cases/${caseId}`);
   revalidatePath(`/cases/${caseId}/timeline`);
+  revalidatePath(`/cases/${caseId}/evidence`);
 }
 
 function parseDuration(value: string) {

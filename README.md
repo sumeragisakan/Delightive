@@ -26,7 +26,10 @@ The SQLite database is local by default. The persistence boundary is kept on the
 - Record people with duplicate display names, reusable ambiguous aliases, and visual colors.
 - Build second-precision timelines with exact, approximate, ranged, relative, and unknown times.
 - Nest locations, assign event participants, and preserve every event aggregate revision.
-- Mark event-dependent accepted claims as `needs_review` when their source event changes.
+- Record revisioned chapters, testimony, documents, images, and user notes as provenance sources.
+- Keep accepted facts source-backed, while allowing unsourced drafts and explicit character statements.
+- Link evidence to sources, people, events, and locations with revision-aware dependencies.
+- Mark affected accepted claims as `needs_review` when a source, event, or upstream claim changes.
 
 ## Local development
 
@@ -65,6 +68,6 @@ Migration files under `drizzle/` are committed. Local database files under `.dat
 
 1. ~~Model cases, people, aliases, events, and fact provenance.~~
 2. ~~Build the case, people, and timeline workspaces.~~
-3. Build the fact/source review interface on top of the existing dependency model.
+3. ~~Build the fact/source review interface on top of the existing dependency model.~~
 4. Add branching hypothesis workflows and contradiction review.
 5. Introduce AI-assisted analysis with cited fact identifiers.
