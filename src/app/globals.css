@@ -348,6 +348,70 @@ textarea:focus-visible {
   color: var(--accent);
 }
 
+.timeline-list {
+  position: relative;
+  display: grid;
+  gap: 1rem;
+  padding-left: 1.6rem;
+}
+
+.timeline-list::before {
+  position: absolute;
+  top: 1rem;
+  bottom: 1rem;
+  left: 0.38rem;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(154, 56, 46, 0.42) 8%,
+    rgba(154, 56, 46, 0.2) 92%,
+    transparent
+  );
+  content: "";
+}
+
+.timeline-event {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 1.1rem;
+  background: rgba(255, 255, 255, 0.56);
+  padding: 1.35rem;
+  box-shadow: 0 8px 30px rgba(24, 32, 37, 0.04);
+}
+
+.timeline-node {
+  position: absolute;
+  top: 1.35rem;
+  left: -1.65rem;
+  height: 0.85rem;
+  width: 0.85rem;
+  border: 3px solid var(--paper);
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px rgba(154, 56, 46, 0.42);
+}
+
+.participant-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper-deep);
+  padding: 0.38rem 0.68rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.participant-editor,
+.location-editor {
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.62);
+  padding: 0.85rem;
+}
+
 .form-message {
   border-radius: 0.7rem;
   padding: 0.7rem 0.85rem;

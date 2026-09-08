@@ -118,6 +118,7 @@ export class EventRepository {
 
   updateEvent(caseId: string, eventId: string, input: EventUpdateInput) {
     const current = this.getEventOrThrow(eventId, caseId);
+    this.assertActive(current);
     assertPercentage(input.certainty, "Event certainty");
     assertInteger(input.sortOrder, "Event sort order");
 
