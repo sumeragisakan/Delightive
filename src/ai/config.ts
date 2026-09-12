@@ -22,6 +22,7 @@ export function createConfiguredAiProvider() {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     throw new ReasoningProviderError(
+      "authentication",
       "尚未配置 OPENAI_API_KEY。请在项目根目录的 .env.local 中添加密钥并重启开发服务器。",
     );
   }

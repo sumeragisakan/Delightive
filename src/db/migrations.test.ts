@@ -267,3 +267,87 @@ describe("AI reasoning run migration", () => {
     }
   });
 });
+
+describe("AI review loop migration", () => {
+  it("preserves prior runs and suggestions while adding review workflow tables", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    try {
+      runMigration(sqlite, "0000_initial_schema.sql");
+      runMigration(sqlite, "0001_timeline_precision_and_event_revisions.sql");
+      runMigration(sqlite, "0002_evidence_source_revisions.sql");
+      runMigration(sqlite, "0003_reasoning_reviews_and_conflicts.sql");
+      runMigration(sqlite, "0004_ai_reasoning_runs.sql");
+      sqlite.prepare("insert into cases (id, title) values (?, ?)").run(
+        "case-1",
+        "旧 AI 案件",
+      );
+      sqlite
+        .prepare("insert into reasoning_branches (id, case_id, name) values (?, ?, ?)")
+        .run("branch-1", "case-1", "旧分支");
+      sqlite
+        .prepare(
+          `insert into reasoning_runs (
+            id, case_id, branch_id, mode, status, provider, model, summary
+          ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "run-1",
+          "case-1",
+          "branch-1",
+          "hypothesis_expansion",
+          "completed",
+          "openai",
+          "old-model",
+          "原运行摘要",
+        );
+      sqlite
+        .prepare(
+          `insert into reasoning_suggestions (
+            id, run_id, kind, status, title, content, rationale, confidence
+          ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "suggestion-1",
+          "run-1",
+          "hypothesis",
+          "dismissed",
+          "旧建议",
+          "原始正文",
+          "原始理由",
+          60,
+        );
+
+      runMigration(sqlite, "0005_ai_review_loop.sql");
+
+      expect(
+        sqlite.prepare("select summary, request_key, retry_of_run_id from reasoning_runs where id = ?").get("run-1"),
+      ).toEqual({
+        request_key: null,
+        retry_of_run_id: null,
+        summary: "原运行摘要",
+      });
+      expect(
+        sqlite.prepare("select content, resolution_kind, resolved_by from reasoning_suggestions where id = ?").get("suggestion-1"),
+      ).toEqual({
+        content: "原始正文",
+        resolution_kind: "dismissed",
+        resolved_by: "user",
+      });
+      expect(
+        sqlite
+          .prepare("select name from sqlite_master where type = 'table' and name in (?, ?, ?) order by name")
+          .pluck()
+          .all("investigation_items", "investigation_item_claims", "reasoning_suggestion_edits"),
+      ).toEqual([
+        "investigation_item_claims",
+        "investigation_items",
+        "reasoning_suggestion_edits",
+      ]);
+      expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+});

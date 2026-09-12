@@ -22,6 +22,8 @@ describe("OpenAI Responses provider", () => {
                         content: "存在第二条通路。",
                         kind: "hypothesis",
                         rationale: "门锁事实没有排除其他出口。",
+                        secondaryClaimId: null,
+                        targetClaimId: null,
                         title: "第二通路",
                       },
                     ],
@@ -92,5 +94,48 @@ describe("OpenAI Responses provider", () => {
       summary: "提出一条待验证假设。",
       usage: { totalTokens: 30 },
     });
+  });
+
+  it("classifies rate limits without persisting an upstream response body", async () => {
+    const provider = new OpenAiResponsesProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.openai.com/v1",
+      fetchImplementation: (async () =>
+        new Response("sensitive upstream body", { status: 429 })) as typeof fetch,
+      model: "test-model",
+      timeoutMs: 10_000,
+    });
+
+    await expect(
+      provider.generate({
+        context: {
+          acceptedInferences: [],
+          case: {
+            id: "case-1",
+            timelineMode: "relative",
+            timelineOriginAt: null,
+            timelineOriginLabel: null,
+            title: "测试案件",
+          },
+          excluded: {
+            draft: 0,
+            ineligibleAccepted: 0,
+            needsReview: 0,
+            reasoningNeedsReview: 0,
+            rejected: 0,
+            rejectedReasoning: 0,
+            staleAcceptedInferences: 0,
+            superseded: 0,
+            unresolvedConflicts: 0,
+          },
+          exploration: { branch: null, claims: [] },
+          fixedEvidence: [],
+          sources: [],
+        },
+        focusClaimId: null,
+        mode: "consistency_check",
+        userPrompt: "",
+      }),
+    ).rejects.toMatchObject({ code: "rate_limit" });
   });
 });

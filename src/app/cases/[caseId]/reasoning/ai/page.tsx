@@ -1,27 +1,47 @@
+import { randomUUID } from "node:crypto";
+
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import {
   AiRunForm,
-  AiSuggestionActions,
+  AiSuggestionReview,
+  RetryAiRunForm,
 } from "../../../../components/ai-reasoning-forms";
 import { CaseWorkspaceFrame } from "../../../../components/case-workspace-frame";
 import { getAiReasoningWorkspace } from "../../../../data";
+import type { InvestigationItem } from "@/db/repositories/ai-reasoning-repository";
 import type { AiReasoningRunView } from "@/db/services/ai-reasoning-service";
+
+type ClaimReference = { content: string; href: string };
+type HistoryView = "all" | "review" | "failed";
 
 export default async function AiReasoningPage({
   params,
   searchParams,
 }: {
   params: Promise<{ caseId: string }>;
-  searchParams: Promise<{ branch?: string | string[] }>;
+  searchParams: Promise<{
+    branch?: string | string[];
+    view?: string | string[];
+  }>;
 }) {
   const { caseId } = await params;
   const query = await searchParams;
   const requestedBranchId =
     typeof query.branch === "string" ? query.branch : undefined;
-  const { caseFile, configuration, context, runs, workspace } =
-    await getAiReasoningWorkspace(caseId, requestedBranchId);
+  const requestedView = typeof query.view === "string" ? query.view : "all";
+  const historyView: HistoryView = ["review", "failed"].includes(requestedView)
+    ? (requestedView as HistoryView)
+    : "all";
+  const {
+    caseFile,
+    configuration,
+    context,
+    investigationItems,
+    runs,
+    workspace,
+  } = await getAiReasoningWorkspace(caseId, requestedBranchId);
 
   if (!caseFile || !workspace) notFound();
 
@@ -55,14 +75,36 @@ export default async function AiReasoningPage({
         })),
       ]
     : [];
-  const claimLabels = new Map(
-    contextClaims.map((claim) => [claim.id, claim.content]),
-  );
+  const claimReferences: Record<string, ClaimReference> = {};
+  for (const claim of contextClaims) {
+    const fixed = claim.kind === "fact" || claim.kind === "statement";
+    claimReferences[claim.id] = {
+      content: claim.content,
+      href: fixed
+        ? `/cases/${caseId}/evidence#claim-${claim.id}`
+        : `/cases/${caseId}/reasoning${branch ? `?branch=${branch.id}` : ""}#claim-${claim.id}`,
+    };
+  }
   for (const run of runs) {
-    for (const [id, content] of readSnapshotClaims(run.input.contextJson)) {
-      if (!claimLabels.has(id)) claimLabels.set(id, content);
+    for (const claim of readSnapshotClaims(run.input.contextJson)) {
+      claimReferences[claim.id] ??= {
+        content: claim.content,
+        href:
+          claim.kind === "fact" || claim.kind === "statement"
+            ? `/cases/${caseId}/evidence#claim-${claim.id}`
+            : `/cases/${caseId}/reasoning?branch=${run.branchId}#claim-${claim.id}`,
+      };
     }
   }
+  const filteredRuns = runs.filter((run) => {
+    if (historyView === "review") {
+      return run.suggestions.some(({ status }) => status === "pending");
+    }
+    if (historyView === "failed") {
+      return run.status === "failed" || run.status === "interrupted";
+    }
+    return true;
+  });
 
   return (
     <CaseWorkspaceFrame
@@ -73,7 +115,7 @@ export default async function AiReasoningPage({
             <p className="eyebrow">模型边界</p>
             <h2 className="mt-2 text-xl font-semibold">只读上下文，人工写入</h2>
             <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-              模型可以阅读固定事实、可信推论和当前分支，但只能生成建议。采纳后也只是第 2 层假设，进入 1.5 层仍需人工审查。
+              模型原文始终保留。人工编辑作为新修订保存，采纳后也只能进入分支草稿、冲突审查或待调查区。
             </p>
           </section>
           <section className="border-t border-[var(--line)] pt-5">
@@ -117,7 +159,7 @@ export default async function AiReasoningPage({
           </h2>
           {branch && (
             <p className="mt-2 text-sm text-[var(--muted)]">
-              {branch.path.join(" / ")} · 单次结构化分析
+              {branch.path.join(" / ")} · 可编辑、可追溯的审阅闭环
             </p>
           )}
         </div>
@@ -129,14 +171,17 @@ export default async function AiReasoningPage({
         </Link>
       </div>
 
-      {branch ? (
+      {branch && context ? (
         <>
           <section className="reasoning-composer mt-6">
-            <div className="mb-5 border-b border-[var(--line)] pb-4">
-              <h3 className="font-semibold">发起新推演</h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                一致性检查、假设扩展、反例搜索和调查缺口共享同一份受版本约束的输入快照。
-              </p>
+            <div className="mb-5 flex flex-col gap-3 border-b border-[var(--line)] pb-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h3 className="font-semibold">发起新推演</h3>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  本次将读取 {context.fixedEvidence.length} 条固定事实、{context.acceptedInferences.length} 条可信推论和 {context.exploration.claims.length} 条当前路线草稿。
+                </p>
+              </div>
+              <span className="record-badge">最多 8 条建议</span>
             </div>
             {!configuration.configured && (
               <div className="reasoning-issues mb-5">
@@ -151,31 +196,51 @@ export default async function AiReasoningPage({
               caseId={caseId}
               configured={configuration.configured}
               focusOptions={focusOptions}
+              requestKey={randomUUID()}
             />
           </section>
 
+          <InvestigationQueue
+            claimReferences={claimReferences}
+            items={investigationItems}
+          />
+
           <section className="mt-10">
-            <div className="mb-4 flex items-end justify-between border-b border-[var(--line)] pb-4">
+            <div className="mb-4 flex flex-col gap-4 border-b border-[var(--line)] pb-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="eyebrow">审计记录</p>
                 <h3 className="mt-2 text-xl font-semibold">运行与建议历史</h3>
               </div>
-              <span className="record-badge">{runs.length} 次</span>
+              <nav aria-label="运行记录筛选" className="flex flex-wrap gap-2">
+                {historyFilters.map((filter) => (
+                  <Link
+                    aria-current={historyView === filter.value ? "page" : undefined}
+                    className={historyView === filter.value ? "primary-button" : "secondary-button"}
+                    href={`/cases/${caseId}/reasoning/ai?branch=${branch.id}&view=${filter.value}`}
+                    key={filter.value}
+                  >
+                    {filter.label}
+                  </Link>
+                ))}
+              </nav>
             </div>
-            {runs.length > 0 ? (
+            {filteredRuns.length > 0 ? (
               <div className="grid gap-5">
-                {runs.map((run) => (
+                {filteredRuns.map((run, index) => (
                   <RunCard
                     caseId={caseId}
-                    claimLabels={claimLabels}
+                    claimReferences={claimReferences}
+                    configured={configuration.configured}
+                    defaultOpen={index === 0 || run.suggestions.some(({ status }) => status === "pending")}
                     key={run.id}
+                    retryRequestKey={randomUUID()}
                     run={run}
                   />
                 ))}
               </div>
             ) : (
               <p className="rounded-xl border border-dashed border-[var(--line)] p-5 text-sm leading-6 text-[var(--muted)]">
-                当前分支还没有 AI 推演记录。
+                当前筛选条件下没有运行记录。
               </p>
             )}
           </section>
@@ -197,92 +262,206 @@ export default async function AiReasoningPage({
 
 function RunCard({
   caseId,
-  claimLabels,
+  claimReferences,
+  configured,
+  defaultOpen,
+  retryRequestKey,
   run,
 }: {
   caseId: string;
-  claimLabels: Map<string, string>;
+  claimReferences: Record<string, ClaimReference>;
+  configured: boolean;
+  defaultOpen: boolean;
+  retryRequestKey: string;
   run: AiReasoningRunView;
 }) {
+  const stats = readSnapshotStats(run.input.contextJson);
+  const labels = Object.fromEntries(
+    Object.entries(claimReferences).map(([id, value]) => [id, value.content]),
+  );
   return (
-    <article className="reasoning-card">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`evidence-status evidence-status-${run.status === "completed" ? "accepted" : run.status === "failed" ? "rejected" : "draft"}`}>
-              {runStatusLabels[run.status]}
-            </span>
-            <span className="text-xs text-[var(--muted)]">{modeLabels[run.mode]}</span>
-            {run.isStale && <span className="branch-origin">输入快照已有后续变化</span>}
+    <details className="reasoning-card" open={defaultOpen}>
+      <summary className="cursor-pointer list-none marker:hidden">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`evidence-status evidence-status-${run.status === "completed" ? "accepted" : run.status === "running" ? "draft" : "rejected"}`}>
+                {runStatusLabels[run.status]}
+              </span>
+              <span className="text-xs text-[var(--muted)]">{modeLabels[run.mode]}</span>
+              {run.isStale && <span className="branch-origin">输入快照已有后续变化</span>}
+              {run.retryOfRunId && <span className="branch-origin">重试运行</span>}
+            </div>
+            <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+              {run.summary || run.errorMessage || "等待模型返回。"}
+            </p>
           </div>
-          <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-            {run.summary || run.errorMessage || "等待模型返回。"}
-          </p>
+          <div className="text-right text-xs leading-5 text-[var(--muted)]">
+            <p>{run.model}</p>
+            <time>{formatDate(run.createdAt)}</time>
+          </div>
         </div>
-        <div className="text-right text-xs leading-5 text-[var(--muted)]">
-          <p>{run.model}</p>
-          <time>{formatDate(run.createdAt)}</time>
-        </div>
-      </div>
+      </summary>
       <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-[var(--line)] pt-4 text-xs text-[var(--muted)]">
         <span>{run.suggestions.length} 条建议</span>
+        <span>输入：{stats.fixed} 事实 / {stats.trusted} 可信 / {stats.drafts} 草稿</span>
         {run.totalTokens !== null && <span>{run.totalTokens} tokens</span>}
         {run.durationMs !== null && <span>{(run.durationMs / 1000).toFixed(1)} 秒</span>}
+        {run.focusClaimId && <span>聚焦：{truncate(claimReferences[run.focusClaimId]?.content ?? run.focusClaimId, 34)}</span>}
         <span className="font-mono">RUN · {run.id.slice(0, 8)}</span>
       </div>
+      {(run.userPrompt || run.errorCode || run.retryOfRunId) && (
+        <div className="mt-4 rounded-xl border border-[var(--line)] bg-white/40 p-3 text-xs leading-5 text-[var(--muted)]">
+          {run.userPrompt && <p>补充要求：{run.userPrompt}</p>}
+          {run.errorCode && <p>错误分类：{errorCodeLabels[run.errorCode]}</p>}
+          {run.retryOfRunId && <p className="font-mono">来源运行：{run.retryOfRunId.slice(0, 8)}</p>}
+        </div>
+      )}
+      {run.status !== "running" && (
+        <RetryAiRunForm
+          caseId={caseId}
+          configured={configured}
+          requestKey={retryRequestKey}
+          runId={run.id}
+        />
+      )}
       {run.suggestions.length > 0 && (
         <div className="mt-5 grid gap-4 border-t border-[var(--line)] pt-5">
           {run.suggestions.map((suggestion) => (
             <article className="rounded-xl border border-[var(--line)] bg-white/55 p-4" key={suggestion.id}>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="reasoning-layer-badge">{suggestionKindLabels[suggestion.kind]}</span>
-                <span className="text-xs text-[var(--muted)]">可信度 {suggestion.confidence}%</span>
+                <span className="text-xs text-[var(--muted)]">可信度 {suggestion.effective.confidence}%</span>
                 <span className="text-xs text-[var(--muted)]">{suggestionStatusLabels[suggestion.status]}</span>
+                {suggestion.edits.length > 0 && <span className="branch-origin">人工修订 {suggestion.edits[0].revision}</span>}
                 {suggestion.isStale && <span className="text-xs font-semibold text-[#765718]">引用已过期</span>}
               </div>
-              <h4 className="mt-3 font-semibold">{suggestion.title}</h4>
-              <p className="mt-2 leading-7">{suggestion.content}</p>
-              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{suggestion.rationale}</p>
+              <h4 className="mt-3 font-semibold">{suggestion.effective.title}</h4>
+              <p className="mt-2 leading-7">{suggestion.effective.content}</p>
+              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{suggestion.effective.rationale}</p>
               <div className="mt-4 flex flex-wrap gap-2">
-                {suggestion.citations.map((citation) => (
-                  <span className="evidence-link" key={`${citation.claimId}-${citation.relation}`}>
-                    {relationLabels[citation.relation]} · {truncate(claimLabels.get(citation.claimId) ?? citation.claimId, 40)} · r{citation.revision}
-                  </span>
-                ))}
+                {suggestion.effective.citations.map((citation) => {
+                  const reference = claimReferences[citation.claimId];
+                  return (
+                    <Link className="evidence-link" href={reference?.href ?? "#"} key={`${citation.claimId}-${citation.relation}`}>
+                      {relationLabels[citation.relation]} · {truncate(reference?.content ?? citation.claimId, 40)} · r{citation.revision}
+                    </Link>
+                  );
+                })}
               </div>
+              {suggestion.edits.length > 0 && (
+                <details className="mt-4 border-t border-[var(--line)] pt-3">
+                  <summary className="cursor-pointer text-xs font-semibold text-[var(--muted)]">
+                    查看模型原文与编辑历史
+                  </summary>
+                  <div className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                    <p className="font-semibold text-[var(--ink)]">模型原文：{suggestion.title}</p>
+                    <p className="mt-1">{suggestion.content}</p>
+                    <ol className="mt-3 space-y-2">
+                      {[...suggestion.edits].reverse().map((edit) => (
+                        <li key={edit.id}>修订 {edit.revision} · {formatDate(edit.editedAt)}{edit.note ? ` · ${edit.note}` : ""}</li>
+                      ))}
+                    </ol>
+                  </div>
+                </details>
+              )}
               {suggestion.validationIssues.length > 0 && (
                 <div className="reasoning-issues mt-4">
-                  <p className="font-semibold">引用校验未通过</p>
+                  <p className="font-semibold">模型原始输出未通过校验</p>
                   {suggestion.validationIssues.map((issue) => <p className="mt-1" key={issue}>• {issue}</p>)}
                 </div>
               )}
               {suggestion.status === "pending" && (
-                <AiSuggestionActions
+                <AiSuggestionReview
+                  baseRevision={suggestion.edits[0]?.revision ?? 0}
                   caseId={caseId}
-                  disabled={suggestion.isStale}
+                  claimLabels={labels}
+                  disabled={suggestion.isStale || suggestion.validationIssues.length > 0}
+                  effective={suggestion.effective}
+                  kind={suggestion.kind}
                   suggestionId={suggestion.id}
                 />
               )}
-              {suggestion.acceptedClaimId && (
+              {suggestion.resolutionKind && (
                 <p className="mt-4 text-xs text-[var(--success)]">
-                  已建立分支假设 · {suggestion.acceptedClaimId.slice(0, 8)}
+                  {resolutionStatusLabels[suggestion.resolutionKind]}
+                  {suggestion.resolutionNote ? ` · ${suggestion.resolutionNote}` : ""}
                 </p>
               )}
             </article>
           ))}
         </div>
       )}
-    </article>
+    </details>
   );
 }
 
+function InvestigationQueue({
+  claimReferences,
+  items,
+}: {
+  claimReferences: Record<string, ClaimReference>;
+  items: InvestigationItem[];
+}) {
+  if (items.length === 0) return null;
+  return (
+    <section className="mt-10">
+      <div className="mb-4 flex items-end justify-between border-b border-[var(--line)] pb-4">
+        <div>
+          <p className="eyebrow">调查移交</p>
+          <h3 className="mt-2 text-xl font-semibold">AI 发现的待调查事项</h3>
+          <p className="mt-2 text-sm text-[var(--muted)]">这里先保留轻量队列；完整任务管理会在下一阶段展开。</p>
+        </div>
+        <span className="record-badge">{items.length} 项</span>
+      </div>
+      <div className="grid gap-3">
+        {items.map((item) => (
+          <article className="reasoning-card" id={`investigation-${item.id}`} key={item.id}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="reasoning-layer-badge">待调查</span>
+              <span className="text-xs text-[var(--muted)]">{investigationStatusLabels[item.status]}</span>
+            </div>
+            <h4 className="mt-3 font-semibold">{item.title}</h4>
+            <p className="mt-2 leading-7">{item.question}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {item.claims.map((claim) => {
+                const reference = claimReferences[claim.claimId];
+                return <Link className="evidence-link" href={reference?.href ?? "#"} key={claim.claimId}>{claim.role === "target" ? "目标" : "上下文"} · {truncate(reference?.content ?? claim.claimId, 38)} · r{claim.claimRevision}</Link>;
+              })}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+const historyFilters = [
+  { label: "全部", value: "all" },
+  { label: "待审", value: "review" },
+  { label: "失败 / 中断", value: "failed" },
+] as const;
 const modeLabels = {
   consistency_check: "一致性检查",
-  hypothesis_expansion: "假设扩展",
   counterexample_search: "反例搜索",
+  hypothesis_expansion: "假设扩展",
   investigation_gaps: "调查缺口",
 } as const;
-const runStatusLabels = { completed: "已完成", failed: "失败", running: "运行中" } as const;
+const runStatusLabels = {
+  completed: "已完成",
+  failed: "失败",
+  interrupted: "已中断",
+  running: "运行中",
+} as const;
+const errorCodeLabels = {
+  authentication: "密钥或权限",
+  interrupted: "执行中断",
+  invalid_output: "模型输出无效",
+  network: "网络连接",
+  provider: "模型服务",
+  rate_limit: "调用限流",
+  timeout: "请求超时",
+} as const;
 const suggestionKindLabels = {
   contradiction: "矛盾",
   counterexample: "反例",
@@ -290,12 +469,29 @@ const suggestionKindLabels = {
   investigation_gap: "调查缺口",
 } as const;
 const suggestionStatusLabels = {
-  accepted: "已转为假设",
+  accepted: "已处置",
   dismissed: "已忽略",
   invalid: "无效输出",
   pending: "待审",
 } as const;
-const relationLabels = { contradicts: "矛盾", depends_on: "依赖", qualifies: "限定", supports: "支持" } as const;
+const resolutionStatusLabels = {
+  conflict_created: "已建立矛盾关系",
+  dismissed: "已忽略并保留记录",
+  hypothesis_created: "已建立分支假设",
+  investigation_created: "已建立待调查事项",
+} as const;
+const investigationStatusLabels = {
+  in_progress: "进行中",
+  pending: "待查",
+  resolved: "已解决",
+  unresolved: "无法确认",
+} as const;
+const relationLabels = {
+  contradicts: "矛盾",
+  depends_on: "依赖",
+  qualifies: "限定",
+  supports: "支持",
+} as const;
 
 function formatDate(value: Date) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -308,23 +504,42 @@ function truncate(value: string, length: number) {
   return value.length > length ? `${value.slice(0, length - 1)}…` : value;
 }
 
-function readSnapshotClaims(contextJson: string): Array<[string, string]> {
+function readSnapshotClaims(contextJson: string) {
   try {
     const context = JSON.parse(contextJson) as {
-      acceptedInferences?: Array<{ content?: unknown; id?: unknown }>;
-      exploration?: { claims?: Array<{ content?: unknown; id?: unknown }> };
-      fixedEvidence?: Array<{ content?: unknown; id?: unknown }>;
+      acceptedInferences?: Array<{ content?: unknown; id?: unknown; kind?: unknown }>;
+      exploration?: { claims?: Array<{ content?: unknown; id?: unknown; kind?: unknown }> };
+      fixedEvidence?: Array<{ content?: unknown; id?: unknown; kind?: unknown }>;
     };
     return [
       ...(context.fixedEvidence ?? []),
       ...(context.acceptedInferences ?? []),
       ...(context.exploration?.claims ?? []),
     ].flatMap((claim) =>
-      typeof claim.id === "string" && typeof claim.content === "string"
-        ? [[claim.id, claim.content] as [string, string]]
+      typeof claim.id === "string" &&
+      typeof claim.content === "string" &&
+      typeof claim.kind === "string"
+        ? [{ content: claim.content, id: claim.id, kind: claim.kind }]
         : [],
     );
   } catch {
     return [];
+  }
+}
+
+function readSnapshotStats(contextJson: string) {
+  try {
+    const context = JSON.parse(contextJson) as {
+      acceptedInferences?: unknown[];
+      exploration?: { claims?: unknown[] };
+      fixedEvidence?: unknown[];
+    };
+    return {
+      drafts: context.exploration?.claims?.length ?? 0,
+      fixed: context.fixedEvidence?.length ?? 0,
+      trusted: context.acceptedInferences?.length ?? 0,
+    };
+  } catch {
+    return { drafts: 0, fixed: 0, trusted: 0 };
   }
 }

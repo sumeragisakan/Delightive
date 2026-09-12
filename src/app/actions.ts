@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import type { ActionState } from "./action-state";
 import { createConfiguredAiProvider } from "@/ai/config";
+import { reasoningCitationSchema } from "@/ai/reasoning-output";
 import { databaseConnection } from "@/db/client";
 import { CaseRepository } from "@/db/repositories/case-repository";
 import { EvidenceRepository } from "@/db/repositories/evidence-repository";
@@ -345,10 +346,36 @@ const aiRunSchema = z.object({
     ],
     { error: "请选择有效的推演任务。" },
   ),
+  requestKey: z
+    .string()
+    .trim()
+    .regex(/^[a-f0-9-]{16,64}$/i, "推演请求标识无效，请刷新页面重试。"),
   userPrompt: z
     .string()
     .trim()
     .max(4_000, "补充要求不能超过 4000 个字符。"),
+});
+
+const suggestionEditSchema = z.object({
+  baseRevision: z.coerce.number().int().min(0),
+  confidence: z.coerce.number().int().min(0).max(100),
+  content: z.string().trim().min(1, "请输入建议内容。").max(8_000),
+  note: z.string().trim().max(2_000, "编辑说明不能超过 2000 个字符。"),
+  rationale: z.string().trim().min(1, "请输入判断理由。").max(4_000),
+  secondaryClaimId: optionalIdSchema,
+  targetClaimId: optionalIdSchema,
+  title: z.string().trim().min(1, "请输入标题。").max(160),
+});
+
+const suggestionResolutionSchema = z.object({
+  note: z.string().trim().max(2_000, "处理说明不能超过 2000 个字符。"),
+});
+
+const aiRetrySchema = z.object({
+  requestKey: z
+    .string()
+    .trim()
+    .regex(/^[a-f0-9-]{16,64}$/i, "重试请求标识无效，请刷新页面重试。"),
 });
 
 export async function createCaseAction(
@@ -1236,6 +1263,7 @@ export async function runAiReasoningAction(
   const parsed = aiRunSchema.safeParse({
     focusClaimId: readText(formData, "focusClaimId"),
     mode: readText(formData, "mode"),
+    requestKey: readText(formData, "requestKey"),
     userPrompt: readText(formData, "userPrompt"),
   });
   if (!parsed.success) {
@@ -1247,7 +1275,14 @@ export async function runAiReasoningAction(
       databaseConnection,
       createConfiguredAiProvider(),
     );
-    await service.startRun({ branchId, caseId, ...parsed.data });
+    const result = await service.startRun({ branchId, caseId, ...parsed.data });
+    if (result.deduplicated) {
+      revalidateCase(caseId);
+      return {
+        message: "这次提交已经被记录，没有重复调用模型。",
+        status: "success",
+      };
+    }
   } catch (error) {
     return reasoningFailure(error, "AI 推演失败，请稍后重试。");
   }
@@ -1259,43 +1294,129 @@ export async function acceptAiSuggestionAction(
   caseId: string,
   suggestionId: string,
   _previousState: ActionState,
-  _formData: FormData,
+  formData: FormData,
 ): Promise<ActionState> {
   void _previousState;
-  void _formData;
+  const parsed = suggestionResolutionSchema.safeParse({
+    note: readText(formData, "note"),
+  });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查采纳说明。");
+  }
   try {
-    new AiReasoningService(databaseConnection).acceptSuggestion(
+    const result = new AiReasoningService(databaseConnection).acceptSuggestion(
       caseId,
       suggestionId,
+      parsed.data.note,
     );
+    revalidateCase(caseId);
+    return {
+      message:
+        result.kind === "conflict"
+          ? "矛盾关系已建立，并进入人工冲突审查队列。"
+          : result.kind === "investigation"
+            ? "建议已转为待调查事项。"
+            : "建议已转为 AI 创建的分支假设；进入可信层仍需人工审查。",
+      status: "success",
+    };
   } catch (error) {
     return reasoningFailure(error, "无法采纳这条 AI 建议。");
   }
-  revalidateCase(caseId);
-  return {
-    message: "建议已转为 AI 创建的分支假设；进入可信层仍需人工审查。",
-    status: "success",
-  };
 }
 
 export async function dismissAiSuggestionAction(
   caseId: string,
   suggestionId: string,
   _previousState: ActionState,
-  _formData: FormData,
+  formData: FormData,
 ): Promise<ActionState> {
   void _previousState;
-  void _formData;
+  const parsed = suggestionResolutionSchema.safeParse({
+    note: readText(formData, "note"),
+  });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查忽略说明。");
+  }
   try {
     new AiReasoningService(databaseConnection).dismissSuggestion(
       caseId,
       suggestionId,
+      parsed.data.note,
     );
   } catch (error) {
     return reasoningFailure(error, "无法忽略这条 AI 建议。");
   }
   revalidateCase(caseId);
   return { message: "建议已保留在历史中并标记为忽略。", status: "success" };
+}
+
+export async function editAiSuggestionAction(
+  caseId: string,
+  suggestionId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  void _previousState;
+  const parsed = suggestionEditSchema.safeParse({
+    baseRevision: readText(formData, "baseRevision"),
+    confidence: readText(formData, "confidence"),
+    content: readText(formData, "content"),
+    note: readText(formData, "editNote"),
+    rationale: readText(formData, "rationale"),
+    secondaryClaimId: readText(formData, "secondaryClaimId"),
+    targetClaimId: readText(formData, "targetClaimId"),
+    title: readText(formData, "title"),
+  });
+  const citationRows = readCitationForm(formData);
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查建议修改内容。");
+  }
+  if (!citationRows.success) {
+    return { message: citationRows.message, status: "error" };
+  }
+  try {
+    new AiReasoningService(databaseConnection).editSuggestion(
+      caseId,
+      suggestionId,
+      parsed.data.baseRevision,
+      { ...parsed.data, citations: citationRows.data },
+    );
+  } catch (error) {
+    return reasoningFailure(error, "无法保存建议修改。");
+  }
+  revalidateCase(caseId);
+  return { message: "人工编辑已保存；模型原始输出仍完整保留。", status: "success" };
+}
+
+export async function retryAiReasoningAction(
+  caseId: string,
+  runId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  void _previousState;
+  const parsed = aiRetrySchema.safeParse({
+    requestKey: readText(formData, "requestKey"),
+  });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "无法重新运行，请刷新页面后重试。");
+  }
+  try {
+    const service = new AiReasoningService(
+      databaseConnection,
+      createConfiguredAiProvider(),
+    );
+    const result = await service.retryRun(caseId, runId, parsed.data.requestKey);
+    revalidateCase(caseId);
+    return {
+      message: result.deduplicated
+        ? "这次重试已经被记录，没有重复调用模型。"
+        : "已按原设置和最新案件上下文完成重新推演。",
+      status: "success",
+    };
+  } catch (error) {
+    return reasoningFailure(error, "重新推演失败，请稍后重试。");
+  }
 }
 
 function readCaseForm(formData: FormData) {
@@ -1394,6 +1515,30 @@ function readParticipantForm(formData: FormData) {
 function readText(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value : "";
+}
+
+function readCitationForm(formData: FormData):
+  | { data: Array<z.infer<typeof reasoningCitationSchema>>; success: true }
+  | { message: string; success: false } {
+  const ids = formData.getAll("citationId");
+  const revisions = formData.getAll("citationRevision");
+  const relations = formData.getAll("citationRelation");
+  if (
+    ids.length === 0 ||
+    ids.length !== revisions.length ||
+    ids.length !== relations.length
+  ) {
+    return { message: "引用数据不完整，请刷新页面后重试。", success: false };
+  }
+  const data = ids.map((claimId, index) => ({
+    claimId,
+    relation: relations[index],
+    revision: Number(revisions[index]),
+  }));
+  const parsed = z.array(reasoningCitationSchema).min(1).max(12).safeParse(data);
+  return parsed.success
+    ? { data: parsed.data, success: true }
+    : { message: "引用关系无效，请检查后重试。", success: false };
 }
 
 function validationFailure(

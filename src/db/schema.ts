@@ -95,7 +95,21 @@ export const reasoningRunModes = [
   "counterexample_search",
   "investigation_gaps",
 ] as const;
-export const reasoningRunStatuses = ["running", "completed", "failed"] as const;
+export const reasoningRunStatuses = [
+  "running",
+  "completed",
+  "failed",
+  "interrupted",
+] as const;
+export const reasoningRunErrorCodes = [
+  "authentication",
+  "rate_limit",
+  "timeout",
+  "network",
+  "invalid_output",
+  "provider",
+  "interrupted",
+] as const;
 export const reasoningSuggestionKinds = [
   "hypothesis",
   "counterexample",
@@ -107,6 +121,18 @@ export const reasoningSuggestionStatuses = [
   "accepted",
   "dismissed",
   "invalid",
+] as const;
+export const reasoningSuggestionResolutionKinds = [
+  "hypothesis_created",
+  "conflict_created",
+  "investigation_created",
+  "dismissed",
+] as const;
+export const investigationItemStatuses = [
+  "pending",
+  "in_progress",
+  "resolved",
+  "unresolved",
 ] as const;
 
 const nowInMilliseconds = sql`(unixepoch() * 1000)`;
@@ -775,6 +801,11 @@ export const reasoningRuns = sqliteTable(
     focusClaimId: text("focus_claim_id").references(() => claims.id, {
       onDelete: "set null",
     }),
+    retryOfRunId: text("retry_of_run_id").references(
+      (): AnySQLiteColumn => reasoningRuns.id,
+      { onDelete: "set null" },
+    ),
+    requestKey: text("request_key"),
     mode: text("mode", { enum: reasoningRunModes }).notNull(),
     status: text("status", { enum: reasoningRunStatuses })
       .notNull()
@@ -788,6 +819,7 @@ export const reasoningRuns = sqliteTable(
     outputTokens: integer("output_tokens"),
     totalTokens: integer("total_tokens"),
     durationMs: integer("duration_ms"),
+    errorCode: text("error_code", { enum: reasoningRunErrorCodes }),
     errorMessage: text("error_message"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -800,13 +832,19 @@ export const reasoningRuns = sqliteTable(
       table.branchId,
       table.createdAt,
     ),
+    index("reasoning_runs_retry_idx").on(table.retryOfRunId),
+    uniqueIndex("reasoning_runs_request_key_unique").on(table.requestKey),
     check(
       "reasoning_runs_mode_check",
       sql`${table.mode} in ('consistency_check', 'hypothesis_expansion', 'counterexample_search', 'investigation_gaps')`,
     ),
     check(
       "reasoning_runs_status_check",
-      sql`${table.status} in ('running', 'completed', 'failed')`,
+      sql`${table.status} in ('running', 'completed', 'failed', 'interrupted')`,
+    ),
+    check(
+      "reasoning_runs_error_code_check",
+      sql`${table.errorCode} is null or ${table.errorCode} in ('authentication', 'rate_limit', 'timeout', 'network', 'invalid_output', 'provider', 'interrupted')`,
     ),
     check(
       "reasoning_runs_usage_check",
@@ -851,9 +889,20 @@ export const reasoningSuggestions = sqliteTable(
     confidence: integer("confidence").notNull(),
     citationsJson: text("citations_json").notNull().default("[]"),
     validationIssuesJson: text("validation_issues_json").notNull().default("[]"),
+    targetClaimId: text("target_claim_id"),
+    secondaryClaimId: text("secondary_claim_id"),
     acceptedClaimId: text("accepted_claim_id").references(() => claims.id, {
       onDelete: "set null",
     }),
+    acceptedClaimLinkId: text("accepted_claim_link_id").references(
+      () => claimLinks.id,
+      { onDelete: "set null" },
+    ),
+    resolutionKind: text("resolution_kind", {
+      enum: reasoningSuggestionResolutionKinds,
+    }),
+    resolutionNote: text("resolution_note").notNull().default(""),
+    resolvedBy: text("resolved_by", { enum: actorKinds }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(nowInMilliseconds),
@@ -874,6 +923,145 @@ export const reasoningSuggestions = sqliteTable(
       "reasoning_suggestions_confidence_check",
       sql`${table.confidence} >= 0 and ${table.confidence} <= 100`,
     ),
+    check(
+      "reasoning_suggestions_target_pair_check",
+      sql`${table.targetClaimId} is null or ${table.secondaryClaimId} is null or ${table.targetClaimId} <> ${table.secondaryClaimId}`,
+    ),
+    check(
+      "reasoning_suggestions_resolution_kind_check",
+      sql`${table.resolutionKind} is null or ${table.resolutionKind} in ('hypothesis_created', 'conflict_created', 'investigation_created', 'dismissed')`,
+    ),
+    check(
+      "reasoning_suggestions_resolved_by_check",
+      sql`${table.resolvedBy} is null or ${table.resolvedBy} in ('user', 'ai')`,
+    ),
+  ],
+);
+
+export const reasoningSuggestionEdits = sqliteTable(
+  "reasoning_suggestion_edits",
+  {
+    id: text("id").primaryKey(),
+    suggestionId: text("suggestion_id")
+      .notNull()
+      .references(() => reasoningSuggestions.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    rationale: text("rationale").notNull(),
+    confidence: integer("confidence").notNull(),
+    citationsJson: text("citations_json").notNull(),
+    targetClaimId: text("target_claim_id"),
+    secondaryClaimId: text("secondary_claim_id"),
+    note: text("note").notNull().default(""),
+    editedBy: text("edited_by", { enum: actorKinds })
+      .notNull()
+      .default("user"),
+    editedAt: integer("edited_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+  },
+  (table) => [
+    uniqueIndex("reasoning_suggestion_edits_revision_unique").on(
+      table.suggestionId,
+      table.revision,
+    ),
+    index("reasoning_suggestion_edits_history_idx").on(
+      table.suggestionId,
+      table.editedAt,
+    ),
+    check(
+      "reasoning_suggestion_edits_revision_check",
+      sql`${table.revision} >= 1`,
+    ),
+    check(
+      "reasoning_suggestion_edits_confidence_check",
+      sql`${table.confidence} >= 0 and ${table.confidence} <= 100`,
+    ),
+    check(
+      "reasoning_suggestion_edits_target_pair_check",
+      sql`${table.targetClaimId} is null or ${table.secondaryClaimId} is null or ${table.targetClaimId} <> ${table.secondaryClaimId}`,
+    ),
+    check(
+      "reasoning_suggestion_edits_actor_check",
+      sql`${table.editedBy} in ('user', 'ai')`,
+    ),
+  ],
+);
+
+export const investigationItems = sqliteTable(
+  "investigation_items",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id")
+      .notNull()
+      .references(() => cases.id, { onDelete: "cascade" }),
+    branchId: text("branch_id")
+      .notNull()
+      .references(() => reasoningBranches.id, { onDelete: "restrict" }),
+    originSuggestionId: text("origin_suggestion_id").references(
+      () => reasoningSuggestions.id,
+      { onDelete: "set null" },
+    ),
+    title: text("title").notNull(),
+    question: text("question").notNull(),
+    notes: text("notes").notNull().default(""),
+    status: text("status", { enum: investigationItemStatuses })
+      .notNull()
+      .default("pending"),
+    createdBy: text("created_by", { enum: actorKinds })
+      .notNull()
+      .default("user"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("investigation_items_case_status_idx").on(table.caseId, table.status),
+    index("investigation_items_branch_idx").on(table.branchId),
+    uniqueIndex("investigation_items_origin_suggestion_unique").on(
+      table.originSuggestionId,
+    ),
+    check(
+      "investigation_items_status_check",
+      sql`${table.status} in ('pending', 'in_progress', 'resolved', 'unresolved')`,
+    ),
+    check(
+      "investigation_items_actor_check",
+      sql`${table.createdBy} in ('user', 'ai')`,
+    ),
+  ],
+);
+
+export const investigationItemClaims = sqliteTable(
+  "investigation_item_claims",
+  {
+    investigationItemId: text("investigation_item_id")
+      .notNull()
+      .references(() => investigationItems.id, { onDelete: "cascade" }),
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => claims.id, { onDelete: "cascade" }),
+    claimRevision: integer("claim_revision").notNull(),
+    role: text("role", { enum: ["target", "context"] })
+      .notNull()
+      .default("context"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.investigationItemId, table.claimId] }),
+    index("investigation_item_claims_claim_idx").on(table.claimId),
+    check(
+      "investigation_item_claims_revision_check",
+      sql`${table.claimRevision} >= 1`,
+    ),
+    check(
+      "investigation_item_claims_role_check",
+      sql`${table.role} in ('target', 'context')`,
+    ),
   ],
 );
 
@@ -888,6 +1076,10 @@ export type SourceRelationKind = (typeof sourceRelationKinds)[number];
 export type ClaimEntityRole = (typeof claimEntityRoles)[number];
 export type ReasoningRunMode = (typeof reasoningRunModes)[number];
 export type ReasoningRunStatus = (typeof reasoningRunStatuses)[number];
+export type ReasoningRunErrorCode = (typeof reasoningRunErrorCodes)[number];
 export type ReasoningSuggestionKind = (typeof reasoningSuggestionKinds)[number];
 export type ReasoningSuggestionStatus =
   (typeof reasoningSuggestionStatuses)[number];
+export type ReasoningSuggestionResolutionKind =
+  (typeof reasoningSuggestionResolutionKinds)[number];
+export type InvestigationItemStatus = (typeof investigationItemStatuses)[number];

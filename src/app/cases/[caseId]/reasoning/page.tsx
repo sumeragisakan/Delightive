@@ -307,7 +307,10 @@ function ReasoningCard({
   const latestReview = claim.reviews[0];
 
   return (
-    <article className={`reasoning-card reasoning-card-${claim.status}`}>
+    <article
+      className={`reasoning-card reasoning-card-${claim.status} scroll-mt-8`}
+      id={`claim-${claim.id}`}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

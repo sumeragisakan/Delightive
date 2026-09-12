@@ -1,31 +1,65 @@
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, lt } from "drizzle-orm";
 
-import type { ReasoningCitation, ReasoningSuggestionOutput } from "../../ai/reasoning-output";
+import type {
+  ReasoningCitation,
+  ReasoningSuggestionOutput,
+} from "../../ai/reasoning-output";
 import type { DatabaseConnection } from "../connection";
 import {
   cases,
   claims,
+  investigationItemClaims,
+  investigationItems,
   reasoningBranches,
   reasoningRunInputs,
   reasoningRuns,
+  reasoningSuggestionEdits,
   reasoningSuggestions,
+  type ReasoningRunErrorCode,
   type ReasoningRunMode,
+  type ReasoningSuggestionResolutionKind,
 } from "../schema";
 
 type RunRow = typeof reasoningRuns.$inferSelect;
 type RunInputRow = typeof reasoningRunInputs.$inferSelect;
 type SuggestionRow = typeof reasoningSuggestions.$inferSelect;
+type SuggestionEditRow = typeof reasoningSuggestionEdits.$inferSelect;
+type InvestigationItemRow = typeof investigationItems.$inferSelect;
+
+export type EditableSuggestion = {
+  citations: ReasoningCitation[];
+  confidence: number;
+  content: string;
+  rationale: string;
+  secondaryClaimId: string | null;
+  targetClaimId: string | null;
+  title: string;
+};
+
+export type AiSuggestionEdit = Omit<SuggestionEditRow, "citationsJson"> & {
+  citations: ReasoningCitation[];
+};
 
 export type AiSuggestion = SuggestionRow & {
   citations: ReasoningCitation[];
+  edits: AiSuggestionEdit[];
+  effective: EditableSuggestion;
   validationIssues: string[];
 };
 
 export type AiReasoningRun = RunRow & {
   input: RunInputRow;
   suggestions: AiSuggestion[];
+};
+
+export type InvestigationItem = InvestigationItemRow & {
+  claims: Array<{
+    claimId: string;
+    claimRevision: number;
+    role: "target" | "context";
+  }>;
 };
 
 export class AiReasoningRepository {
@@ -40,14 +74,29 @@ export class AiReasoningRepository {
     mode: ReasoningRunMode;
     model: string;
     provider: string;
+    requestKey: string;
+    retryOfRunId?: string | null;
     userPrompt: string;
-  }) {
+  }): { created: boolean; run: RunRow } {
     this.assertCaseBranch(input.caseId, input.branchId);
-    if (input.focusClaimId) {
-      this.assertClaimInCase(input.caseId, input.focusClaimId);
+    if (input.focusClaimId) this.assertClaimInCase(input.caseId, input.focusClaimId);
+    if (input.retryOfRunId) {
+      this.getRunForCase(input.caseId, input.retryOfRunId);
     }
 
-    const run = this.connection.sqlite.transaction(() => {
+    const existing = this.connection.db
+      .select()
+      .from(reasoningRuns)
+      .where(eq(reasoningRuns.requestKey, input.requestKey))
+      .get();
+    if (existing) {
+      if (existing.caseId !== input.caseId) {
+        throw new Error("推演请求标识与案件不匹配。");
+      }
+      return { created: false, run: existing };
+    }
+
+    const transaction = this.connection.sqlite.transaction(() => {
       const created = this.connection.db
         .insert(reasoningRuns)
         .values({
@@ -58,6 +107,8 @@ export class AiReasoningRepository {
           mode: input.mode,
           model: input.model,
           provider: input.provider,
+          requestKey: input.requestKey,
+          retryOfRunId: input.retryOfRunId ?? null,
           userPrompt: input.userPrompt,
         })
         .returning()
@@ -73,8 +124,7 @@ export class AiReasoningRepository {
         .run();
       return created;
     });
-
-    return run();
+    return { created: true, run: transaction() };
   }
 
   completeRun(input: {
@@ -103,8 +153,10 @@ export class AiReasoningRepository {
             kind: suggestion.output.kind,
             rationale: suggestion.output.rationale,
             runId: input.runId,
+            secondaryClaimId: suggestion.output.secondaryClaimId,
             status:
               suggestion.validationIssues.length > 0 ? "invalid" : "pending",
+            targetClaimId: suggestion.output.targetClaimId,
             title: suggestion.output.title,
             validationIssuesJson: JSON.stringify(suggestion.validationIssues),
           })
@@ -115,6 +167,8 @@ export class AiReasoningRepository {
         .set({
           completedAt,
           durationMs: input.durationMs,
+          errorCode: null,
+          errorMessage: null,
           inputTokens: input.inputTokens,
           outputTokens: input.outputTokens,
           remoteResponseId: input.remoteResponseId,
@@ -131,12 +185,18 @@ export class AiReasoningRepository {
     return transaction();
   }
 
-  failRun(runId: string, errorMessage: string, durationMs: number) {
+  failRun(
+    runId: string,
+    errorCode: ReasoningRunErrorCode,
+    errorMessage: string,
+    durationMs: number,
+  ) {
     return this.connection.db
       .update(reasoningRuns)
       .set({
         completedAt: new Date(),
         durationMs,
+        errorCode,
         errorMessage,
         status: "failed",
       })
@@ -145,6 +205,25 @@ export class AiReasoningRepository {
       )
       .returning()
       .get();
+  }
+
+  interruptExpiredRuns(caseId: string, olderThan: Date) {
+    return this.connection.db
+      .update(reasoningRuns)
+      .set({
+        completedAt: new Date(),
+        errorCode: "interrupted",
+        errorMessage: "运行未正常结束，已由系统回收；可以使用原设置重新运行。",
+        status: "interrupted",
+      })
+      .where(
+        and(
+          eq(reasoningRuns.caseId, caseId),
+          eq(reasoningRuns.status, "running"),
+          lt(reasoningRuns.createdAt, olderThan),
+        ),
+      )
+      .run();
   }
 
   listRuns(caseId: string, branchId?: string | null): AiReasoningRun[] {
@@ -165,9 +244,23 @@ export class AiReasoningRepository {
       }));
   }
 
+  getRunForCase(caseId: string, runId: string) {
+    const run = this.connection.db
+      .select()
+      .from(reasoningRuns)
+      .where(and(eq(reasoningRuns.id, runId), eq(reasoningRuns.caseId, caseId)))
+      .get();
+    if (!run) throw new Error("找不到这次 AI 推演。");
+    return run;
+  }
+
   getSuggestionForCase(caseId: string, suggestionId: string) {
     const result = this.connection.db
-      .select({ input: reasoningRunInputs, run: reasoningRuns, suggestion: reasoningSuggestions })
+      .select({
+        input: reasoningRunInputs,
+        run: reasoningRuns,
+        suggestion: reasoningSuggestions,
+      })
       .from(reasoningSuggestions)
       .innerJoin(reasoningRuns, eq(reasoningRuns.id, reasoningSuggestions.runId))
       .innerJoin(reasoningRunInputs, eq(reasoningRunInputs.runId, reasoningRuns.id))
@@ -178,51 +271,146 @@ export class AiReasoningRepository {
         ),
       )
       .get();
-    if (!result) {
-      throw new Error("找不到这条 AI 建议。");
-    }
+    if (!result) throw new Error("找不到这条 AI 建议。");
     return {
       input: result.input,
       run: result.run,
-      suggestion: hydrateSuggestion(result.suggestion),
+      suggestion: this.hydrateSuggestion(result.suggestion),
     };
   }
 
-  markSuggestionAccepted(suggestionId: string, acceptedClaimId: string) {
+  addSuggestionEdit(
+    caseId: string,
+    suggestionId: string,
+    baseRevision: number,
+    input: EditableSuggestion & { note: string },
+  ) {
+    const transaction = this.connection.sqlite.transaction(() => {
+      const record = this.getSuggestionForCase(caseId, suggestionId);
+      if (record.suggestion.status !== "pending") {
+        throw new Error("已处理的建议不能继续编辑。");
+      }
+      const currentRevision = record.suggestion.edits[0]?.revision ?? 0;
+      if (currentRevision !== baseRevision) {
+        throw new Error("建议已经被其他编辑更新，请刷新后重试。");
+      }
+      return this.connection.db
+        .insert(reasoningSuggestionEdits)
+        .values({
+          citationsJson: JSON.stringify(input.citations),
+          confidence: input.confidence,
+          content: input.content,
+          id: randomUUID(),
+          note: input.note,
+          rationale: input.rationale,
+          revision: currentRevision + 1,
+          secondaryClaimId: input.secondaryClaimId,
+          suggestionId,
+          targetClaimId: input.targetClaimId,
+          title: input.title,
+        })
+        .returning()
+        .get();
+    });
+    return transaction();
+  }
+
+  markSuggestionResolved(input: {
+    acceptedClaimId?: string | null;
+    acceptedClaimLinkId?: string | null;
+    note?: string;
+    resolutionKind: ReasoningSuggestionResolutionKind;
+    suggestionId: string;
+  }) {
     const updated = this.connection.db
       .update(reasoningSuggestions)
-      .set({ acceptedClaimId, resolvedAt: new Date(), status: "accepted" })
+      .set({
+        acceptedClaimId: input.acceptedClaimId ?? null,
+        acceptedClaimLinkId: input.acceptedClaimLinkId ?? null,
+        resolutionKind: input.resolutionKind,
+        resolutionNote: input.note?.trim() ?? "",
+        resolvedAt: new Date(),
+        resolvedBy: "user",
+        status: input.resolutionKind === "dismissed" ? "dismissed" : "accepted",
+      })
       .where(
         and(
-          eq(reasoningSuggestions.id, suggestionId),
+          eq(reasoningSuggestions.id, input.suggestionId),
           eq(reasoningSuggestions.status, "pending"),
         ),
       )
       .returning()
       .get();
-    if (!updated) {
-      throw new Error("这条建议已经处理，不能重复采纳。");
-    }
+    if (!updated) throw new Error("这条建议已经处理，不能重复操作。");
     return updated;
   }
 
-  dismissSuggestion(caseId: string, suggestionId: string) {
-    this.getSuggestionForCase(caseId, suggestionId);
-    const updated = this.connection.db
-      .update(reasoningSuggestions)
-      .set({ resolvedAt: new Date(), status: "dismissed" })
-      .where(
-        and(
-          eq(reasoningSuggestions.id, suggestionId),
-          eq(reasoningSuggestions.status, "pending"),
-        ),
-      )
+  createInvestigationItem(input: {
+    branchId: string;
+    caseId: string;
+    citations: ReasoningCitation[];
+    notes: string;
+    originSuggestionId: string;
+    question: string;
+    targetClaimId: string | null;
+    title: string;
+  }) {
+    const item = this.connection.db
+      .insert(investigationItems)
+      .values({
+        branchId: input.branchId,
+        caseId: input.caseId,
+        createdBy: "ai",
+        id: randomUUID(),
+        notes: input.notes,
+        originSuggestionId: input.originSuggestionId,
+        question: input.question,
+        title: input.title,
+      })
       .returning()
       .get();
-    if (!updated) {
-      throw new Error("这条建议已经处理。");
+    const byClaim = new Map<string, ReasoningCitation>();
+    for (const citation of input.citations) {
+      if (!byClaim.has(citation.claimId)) byClaim.set(citation.claimId, citation);
     }
-    return updated;
+    for (const citation of byClaim.values()) {
+      this.connection.db
+        .insert(investigationItemClaims)
+        .values({
+          claimId: citation.claimId,
+          claimRevision: citation.revision,
+          investigationItemId: item.id,
+          role: citation.claimId === input.targetClaimId ? "target" : "context",
+        })
+        .run();
+    }
+    return item;
+  }
+
+  listInvestigationItems(caseId: string, branchId: string): InvestigationItem[] {
+    return this.connection.db
+      .select()
+      .from(investigationItems)
+      .where(
+        and(
+          eq(investigationItems.caseId, caseId),
+          eq(investigationItems.branchId, branchId),
+        ),
+      )
+      .orderBy(desc(investigationItems.createdAt))
+      .all()
+      .map((item) => ({
+        ...item,
+        claims: this.connection.db
+          .select({
+            claimId: investigationItemClaims.claimId,
+            claimRevision: investigationItemClaims.claimRevision,
+            role: investigationItemClaims.role,
+          })
+          .from(investigationItemClaims)
+          .where(eq(investigationItemClaims.investigationItemId, item.id))
+          .all(),
+      }));
   }
 
   private listSuggestions(runId: string) {
@@ -232,7 +420,44 @@ export class AiReasoningRepository {
       .where(eq(reasoningSuggestions.runId, runId))
       .orderBy(desc(reasoningSuggestions.createdAt))
       .all()
-      .map(hydrateSuggestion);
+      .map((suggestion) => this.hydrateSuggestion(suggestion));
+  }
+
+  private hydrateSuggestion(row: SuggestionRow): AiSuggestion {
+    const edits = this.connection.db
+      .select()
+      .from(reasoningSuggestionEdits)
+      .where(eq(reasoningSuggestionEdits.suggestionId, row.id))
+      .orderBy(desc(reasoningSuggestionEdits.revision))
+      .all()
+      .map(hydrateEdit);
+    const latest = edits[0];
+    const citations = parseJsonArray<ReasoningCitation>(row.citationsJson);
+    return {
+      ...row,
+      citations,
+      edits,
+      effective: latest
+        ? {
+            citations: latest.citations,
+            confidence: latest.confidence,
+            content: latest.content,
+            rationale: latest.rationale,
+            secondaryClaimId: latest.secondaryClaimId,
+            targetClaimId: latest.targetClaimId,
+            title: latest.title,
+          }
+        : {
+            citations,
+            confidence: row.confidence,
+            content: row.content,
+            rationale: row.rationale,
+            secondaryClaimId: row.secondaryClaimId,
+            targetClaimId: row.targetClaimId,
+            title: row.title,
+          },
+      validationIssues: parseJsonArray<string>(row.validationIssuesJson),
+    };
   }
 
   private assertCaseBranch(caseId: string, branchId: string) {
@@ -259,17 +484,14 @@ export class AiReasoningRepository {
       .from(claims)
       .where(and(eq(claims.id, claimId), eq(claims.caseId, caseId)))
       .get();
-    if (!claim) {
-      throw new Error("聚焦内容不属于当前案件。");
-    }
+    if (!claim) throw new Error("聚焦内容不属于当前案件。");
   }
 }
 
-function hydrateSuggestion(row: SuggestionRow): AiSuggestion {
+function hydrateEdit(row: SuggestionEditRow): AiSuggestionEdit {
   return {
     ...row,
     citations: parseJsonArray<ReasoningCitation>(row.citationsJson),
-    validationIssues: parseJsonArray<string>(row.validationIssuesJson),
   };
 }
 

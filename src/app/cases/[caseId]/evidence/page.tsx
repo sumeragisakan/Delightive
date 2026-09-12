@@ -256,7 +256,7 @@ function EvidenceSummaryCard({
   sources: EvidenceSource[];
 }) {
   return (
-    <article className="evidence-card">
+    <article className="evidence-card scroll-mt-8" id={`claim-${claim.id}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

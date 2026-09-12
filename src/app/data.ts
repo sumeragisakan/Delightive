@@ -86,6 +86,7 @@ export async function getAiReasoningWorkspace(
       caseFile,
       configuration: getAiConfigurationStatus(),
       context: null,
+      investigationItems: [],
       runs: [],
       workspace: null,
     };
@@ -98,6 +99,12 @@ export async function getAiReasoningWorkspace(
     context: selectedBranchId
       ? buildReasoningContext(databaseConnection, caseId, selectedBranchId)
       : null,
+    investigationItems: selectedBranchId
+      ? new AiReasoningService(databaseConnection).listInvestigationItems(
+          caseId,
+          selectedBranchId,
+        )
+      : [],
     runs: selectedBranchId
       ? new AiReasoningService(databaseConnection).listRuns(caseId, selectedBranchId)
       : [],

@@ -327,6 +327,37 @@ export class ReasoningWorkspaceRepository {
     );
   }
 
+  createContradiction(input: {
+    caseId: string;
+    conclusionClaimId: string;
+    createdBy?: ActorKind;
+    premiseClaimId: string;
+    rationale?: string;
+    strength?: number | null;
+  }) {
+    const premise = this.getClaimForCaseOrThrow(
+      input.caseId,
+      input.premiseClaimId,
+    );
+    const conclusion = this.getClaimForCaseOrThrow(
+      input.caseId,
+      input.conclusionClaimId,
+    );
+    if (premise.archivedAt || conclusion.archivedAt) {
+      throw new Error("Archived claims cannot be linked as a contradiction.");
+    }
+    const link = this.reasoning.linkClaims({
+      conclusionClaimId: conclusion.id,
+      createdBy: input.createdBy ?? "user",
+      premiseClaimId: premise.id,
+      rationale: input.rationale,
+      relation: "contradicts",
+      strength: input.strength,
+    });
+    this.touchCase(input.caseId);
+    return link;
+  }
+
   removeArgument(caseId: string, linkId: string, changedBy: ActorKind = "user") {
     const link = this.getLinkForCaseOrThrow(caseId, linkId);
     const conclusion = this.getReasoningClaimOrThrow(

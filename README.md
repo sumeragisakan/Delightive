@@ -32,6 +32,9 @@ The SQLite database is local by default. The persistence boundary is kept on the
 - Mark affected accepted claims as `needs_review` when a source, event, or upstream claim changes.
 - Run cited AI consistency checks, hypothesis expansion, counterexample searches, and investigation-gap analysis against an immutable branch snapshot.
 - Review every AI suggestion before turning it into a branch hypothesis; AI output cannot directly enter the trusted layer.
+- Preserve model output while recording user edits as separate suggestion revisions.
+- Resolve AI suggestions by type: branch hypothesis, explicit contradiction, or a lightweight investigation item.
+- Deduplicate repeated submissions, recover interrupted runs, and retry against the latest case context with a linked audit trail.
 
 ## Local development
 

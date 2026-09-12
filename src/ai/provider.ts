@@ -25,9 +25,24 @@ export interface ReasoningModelProvider {
   generate(request: ReasoningModelRequest): Promise<ReasoningModelResult>;
 }
 
+export type ReasoningProviderErrorCode =
+  | "authentication"
+  | "rate_limit"
+  | "timeout"
+  | "network"
+  | "invalid_output"
+  | "provider";
+
 export class ReasoningProviderError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  readonly code: ReasoningProviderErrorCode;
+
+  constructor(
+    code: ReasoningProviderErrorCode,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
     super(message, options);
+    this.code = code;
     this.name = "ReasoningProviderError";
   }
 }

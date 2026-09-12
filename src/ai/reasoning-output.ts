@@ -20,6 +20,8 @@ export const reasoningSuggestionOutputSchema = z
     content: z.string().trim().min(1).max(8_000),
     kind: z.enum(reasoningSuggestionKinds),
     rationale: z.string().trim().min(1).max(4_000),
+    secondaryClaimId: z.string().min(1).nullable(),
+    targetClaimId: z.string().min(1).nullable(),
     title: z.string().trim().min(1).max(160),
   })
   .strict();
@@ -63,6 +65,8 @@ export const reasoningOutputJsonSchema = {
           content: { maxLength: 8_000, minLength: 1, type: "string" },
           kind: { enum: reasoningSuggestionKinds, type: "string" },
           rationale: { maxLength: 4_000, minLength: 1, type: "string" },
+          secondaryClaimId: { type: ["string", "null"] },
+          targetClaimId: { type: ["string", "null"] },
           title: { maxLength: 160, minLength: 1, type: "string" },
         },
         required: [
@@ -71,6 +75,8 @@ export const reasoningOutputJsonSchema = {
           "content",
           "kind",
           "rationale",
+          "secondaryClaimId",
+          "targetClaimId",
           "title",
         ],
         type: "object",
