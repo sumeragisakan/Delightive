@@ -2,7 +2,6 @@ import "server-only";
 
 import { connection } from "next/server";
 
-import { getAiConfigurationStatus } from "@/ai/config";
 import { databaseConnection } from "@/db/client";
 import { CaseRepository } from "@/db/repositories/case-repository";
 import { EvidenceRepository } from "@/db/repositories/evidence-repository";
@@ -11,6 +10,8 @@ import { LocationRepository } from "@/db/repositories/location-repository";
 import { InvestigationRepository } from "@/db/repositories/investigation-repository";
 import { ReasoningWorkspaceRepository } from "@/db/repositories/reasoning-workspace-repository";
 import { AiReasoningService } from "@/db/services/ai-reasoning-service";
+import { AiRunComparisonService } from "@/db/services/ai-run-comparison-service";
+import { AiSettingsService } from "@/db/services/ai-settings-service";
 import { buildReasoningContext } from "@/db/services/reasoning-context-service";
 
 const caseRepository = new CaseRepository(databaseConnection);
@@ -21,6 +22,7 @@ const investigationRepository = new InvestigationRepository(databaseConnection);
 const reasoningWorkspaceRepository = new ReasoningWorkspaceRepository(
   databaseConnection,
 );
+const aiSettingsService = new AiSettingsService(databaseConnection);
 
 export async function getCaseDashboard() {
   await connection();
@@ -86,7 +88,7 @@ export async function getAiReasoningWorkspace(
   if (!caseFile) {
     return {
       caseFile,
-      configuration: getAiConfigurationStatus(),
+      configuration: aiSettingsService.getSettings(),
       context: null,
       investigationItems: [],
       runs: [],
@@ -97,7 +99,7 @@ export async function getAiReasoningWorkspace(
   const selectedBranchId = workspace.selectedBranch?.id;
   return {
     caseFile,
-    configuration: getAiConfigurationStatus(),
+    configuration: aiSettingsService.getSettings(),
     context: selectedBranchId
       ? buildReasoningContext(databaseConnection, caseId, selectedBranchId)
       : null,
@@ -112,6 +114,28 @@ export async function getAiReasoningWorkspace(
       : [],
     workspace,
   };
+}
+
+export async function getAiRunComparison(
+  caseId: string,
+  leftRunId: string,
+  rightRunId: string,
+) {
+  await connection();
+  const caseFile = caseRepository.getCaseSummary(caseId);
+  if (!caseFile) return { caseFile, comparison: null };
+  try {
+    return {
+      caseFile,
+      comparison: new AiRunComparisonService(databaseConnection).compare(
+        caseId,
+        leftRunId,
+        rightRunId,
+      ),
+    };
+  } catch {
+    return { caseFile, comparison: null };
+  }
 }
 
 export async function getInvestigationWorkspace(

@@ -1,9 +1,14 @@
+import { randomUUID } from "node:crypto";
+
 import type {
   ReasoningModelProvider,
   ReasoningModelRequest,
   ReasoningModelResult,
 } from "./provider";
-import { ReasoningProviderError } from "./provider";
+import {
+  AiConnectionDiagnosticError,
+  ReasoningProviderError,
+} from "./provider";
 import {
   reasoningOutputJsonSchema,
   reasoningOutputSchema,
@@ -13,6 +18,7 @@ type OpenAiResponsesProviderOptions = {
   apiKey: string;
   baseUrl: string;
   fetchImplementation?: typeof fetch;
+  maxOutputTokens: number;
   model: string;
   timeoutMs: number;
 };
@@ -47,12 +53,14 @@ export class OpenAiResponsesProvider implements ReasoningModelProvider {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImplementation: typeof fetch;
+  private readonly maxOutputTokens: number;
   private readonly timeoutMs: number;
 
   constructor(options: OpenAiResponsesProviderOptions) {
     this.apiKey = options.apiKey;
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.fetchImplementation = options.fetchImplementation ?? fetch;
+    this.maxOutputTokens = options.maxOutputTokens;
     this.model = options.model;
     this.timeoutMs = options.timeoutMs;
   }
@@ -80,7 +88,7 @@ export class OpenAiResponsesProvider implements ReasoningModelProvider {
             "不要输出隐藏思维过程。rationale 只写可供用户核查的简短理由。",
             "不要补造人物、事件、来源或确定性；不确定时明确降低 confidence。",
           ].join("\n"),
-          max_output_tokens: 2_500,
+          max_output_tokens: this.maxOutputTokens,
           model: this.model,
           store: false,
           text: {
@@ -176,4 +184,96 @@ export class OpenAiResponsesProvider implements ReasoningModelProvider {
       clearTimeout(timeout);
     }
   }
+
+  async diagnoseConnection() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const clientRequestId = randomUUID();
+    const startedAt = Date.now();
+
+    try {
+      const response = await this.fetchImplementation(`${this.baseUrl}/responses`, {
+        body: JSON.stringify({
+          input: "Reply with DELIGHTIVE_OK only.",
+          instructions:
+            "This is a connection diagnostic. Do not use tools. Return only DELIGHTIVE_OK.",
+          max_output_tokens: Math.min(this.maxOutputTokens, 128),
+          model: this.model,
+          store: false,
+        }),
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+          "X-Client-Request-Id": clientRequestId,
+        },
+        method: "POST",
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new AiConnectionDiagnosticError(
+          response.status === 401 || response.status === 403
+            ? "authentication"
+            : response.status === 429
+              ? "rate_limit"
+              : response.status === 400 || response.status === 404
+                ? "model"
+                : "provider",
+          diagnosticHttpMessage(response.status),
+        );
+      }
+
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch (error) {
+        throw new AiConnectionDiagnosticError(
+          "provider",
+          "模型服务已响应，但返回内容无法读取。",
+          { cause: error },
+        );
+      }
+      if (!payload || typeof payload !== "object") {
+        throw new AiConnectionDiagnosticError(
+          "provider",
+          "模型服务已响应，但没有返回有效的 Responses 对象。",
+        );
+      }
+
+      return {
+        clientRequestId,
+        durationMs: Date.now() - startedAt,
+        requestId: response.headers.get("x-request-id"),
+      };
+    } catch (error) {
+      if (error instanceof AiConnectionDiagnosticError) throw error;
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new AiConnectionDiagnosticError(
+          "timeout",
+          "连接测试超时，请检查网络或提高超时上限。",
+          { cause: error },
+        );
+      }
+      throw new AiConnectionDiagnosticError(
+        "network",
+        "无法连接模型服务，请检查网络与 OPENAI_BASE_URL。",
+        { cause: error },
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+function diagnosticHttpMessage(status: number) {
+  if (status === 401 || status === 403) {
+    return "身份验证失败，请检查 OPENAI_API_KEY 及其项目权限。";
+  }
+  if (status === 429) {
+    return "模型服务正在限流，或当前项目额度不可用。";
+  }
+  if (status === 400 || status === 404) {
+    return "模型不可用，请检查模型 ID、Base URL 与项目权限。";
+  }
+  return `模型服务暂时不可用（HTTP ${status}）。`;
 }

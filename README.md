@@ -40,6 +40,8 @@ The SQLite database is local by default. The persistence boundary is kept on the
 - Close an investigation with a result, reuse or create a provenance source, and optionally create a draft fact or statement for separate human review.
 - Export a complete case as a versioned `.delightive.json` package, preview and import it as an independent copy, and preserve its revision and AI audit trails with fresh internal IDs while omitting machine-specific absolute paths.
 - Download a transactionally consistent SQLite backup containing every local case. Environment files and API keys are never included in either export format.
+- Configure the model, request timeout, output-token limit, and AI availability from the workspace while keeping credentials server-only.
+- Run a privacy-safe connection diagnostic and compare any two historical runs across their immutable inputs, outputs, and human review state without another API call.
 
 ## Local development
 
@@ -65,9 +67,12 @@ OPENAI_API_KEY=replace-with-your-api-key
 OPENAI_MODEL=gpt-5.2
 OPENAI_BASE_URL=https://api.openai.com/v1
 AI_REQUEST_TIMEOUT_MS=60000
+AI_MAX_OUTPUT_TOKENS=2500
 ```
 
 Restart `pnpm dev` after changing environment variables. The OpenAI adapter uses the Responses API with structured JSON output and sets `store: false`. Run inputs, validated suggestions, model metadata, and token usage are stored locally for audit; API keys and hidden model reasoning are not stored.
+
+The AI workspace can save non-sensitive runtime preferences to SQLite. `OPENAI_API_KEY` and `OPENAI_BASE_URL` remain environment-only and are never shown or saved by the settings form. The connection test sends only a fixed diagnostic phrase, not case data. Save settings before testing them.
 
 Quality checks:
 
@@ -96,4 +101,5 @@ Migration files under `drizzle/` are committed. Local database files under `.dat
 5. ~~Introduce AI-assisted analysis with cited fact identifiers.~~
 6. ~~Add a tracked investigation planning and result-feedback workflow.~~
 7. ~~Add versioned case export/import and whole-database backup.~~
-8. Add model/provider controls and reasoning-run comparison.
+8. ~~Add model controls, connection diagnostics, and reasoning-run comparison.~~
+9. Add cross-case search and a printable reasoning report.

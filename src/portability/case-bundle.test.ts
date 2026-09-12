@@ -24,6 +24,7 @@ const migrations = [
   "0004_ai_reasoning_runs.sql",
   "0005_ai_review_loop.sql",
   "0006_investigation_workflow.sql",
+  "0007_ai_runtime_settings.sql",
 ];
 
 describe("case bundle portability", () => {

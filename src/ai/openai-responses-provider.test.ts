@@ -44,6 +44,7 @@ describe("OpenAI Responses provider", () => {
       apiKey: "test-key",
       baseUrl: "https://api.openai.com/v1/",
       fetchImplementation,
+      maxOutputTokens: 2048,
       model: "test-model",
       timeoutMs: 10_000,
     });
@@ -86,6 +87,7 @@ describe("OpenAI Responses provider", () => {
     });
     expect(body).toMatchObject({
       model: "test-model",
+      max_output_tokens: 2048,
       store: false,
       text: { format: { strict: true, type: "json_schema" } },
     });
@@ -102,6 +104,7 @@ describe("OpenAI Responses provider", () => {
       baseUrl: "https://api.openai.com/v1",
       fetchImplementation: (async () =>
         new Response("sensitive upstream body", { status: 429 })) as typeof fetch,
+      maxOutputTokens: 2500,
       model: "test-model",
       timeoutMs: 10_000,
     });
@@ -137,5 +140,56 @@ describe("OpenAI Responses provider", () => {
         userPrompt: "",
       }),
     ).rejects.toMatchObject({ code: "rate_limit" });
+  });
+
+  it("diagnoses the connection with a minimal request and trace identifiers", async () => {
+    const fetchImplementation = vi.fn(async () =>
+      new Response(JSON.stringify({ id: "resp_diagnostic" }), {
+        headers: { "x-request-id": "req_server_123" },
+        status: 200,
+      }),
+    ) as unknown as typeof fetch;
+    const provider = new OpenAiResponsesProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.openai.com/v1/",
+      fetchImplementation,
+      maxOutputTokens: 2500,
+      model: "test-model",
+      timeoutMs: 10_000,
+    });
+
+    const result = await provider.diagnoseConnection();
+    const [url, request] = (fetchImplementation as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(String((request as RequestInit).body));
+    const headers = (request as RequestInit).headers as Record<string, string>;
+
+    expect(url).toBe("https://api.openai.com/v1/responses");
+    expect(body).toEqual({
+      input: "Reply with DELIGHTIVE_OK only.",
+      instructions:
+        "This is a connection diagnostic. Do not use tools. Return only DELIGHTIVE_OK.",
+      max_output_tokens: 128,
+      model: "test-model",
+      store: false,
+    });
+    expect(headers["X-Client-Request-Id"]).toMatch(/^[a-f0-9-]{36}$/);
+    expect(result).toMatchObject({ requestId: "req_server_123" });
+  });
+
+  it("classifies diagnostic authentication failures without exposing a response body", async () => {
+    const provider = new OpenAiResponsesProvider({
+      apiKey: "bad-key",
+      baseUrl: "https://api.openai.com/v1",
+      fetchImplementation: (async () =>
+        new Response("secret diagnostic details", { status: 401 })) as typeof fetch,
+      maxOutputTokens: 2500,
+      model: "test-model",
+      timeoutMs: 10_000,
+    });
+
+    await expect(provider.diagnoseConnection()).rejects.toMatchObject({
+      code: "authentication",
+      message: expect.not.stringContaining("secret diagnostic details"),
+    });
   });
 });

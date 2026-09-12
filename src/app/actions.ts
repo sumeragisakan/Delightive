@@ -4,8 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import type { ActionState } from "./action-state";
-import { createConfiguredAiProvider } from "@/ai/config";
+import type { ActionState, AiDiagnosticActionState } from "./action-state";
 import { reasoningCitationSchema } from "@/ai/reasoning-output";
 import { databaseConnection } from "@/db/client";
 import { CaseRepository } from "@/db/repositories/case-repository";
@@ -15,6 +14,7 @@ import { LocationRepository } from "@/db/repositories/location-repository";
 import { InvestigationRepository } from "@/db/repositories/investigation-repository";
 import { ReasoningWorkspaceRepository } from "@/db/repositories/reasoning-workspace-repository";
 import { AiReasoningService } from "@/db/services/ai-reasoning-service";
+import { AiSettingsService } from "@/db/services/ai-settings-service";
 import type {
   ClaimEntityRole,
   SourceRelationKind,
@@ -28,6 +28,7 @@ const investigationRepository = new InvestigationRepository(databaseConnection);
 const reasoningWorkspaceRepository = new ReasoningWorkspaceRepository(
   databaseConnection,
 );
+const aiSettingsService = new AiSettingsService(databaseConnection);
 
 const caseSchema = z.object({
   description: z.string().trim().max(2_000, "案件说明不能超过 2000 个字符。"),
@@ -378,6 +379,27 @@ const aiRetrySchema = z.object({
     .string()
     .trim()
     .regex(/^[a-f0-9-]{16,64}$/i, "重试请求标识无效，请刷新页面重试。"),
+});
+
+const aiSettingsSchema = z.object({
+  enabled: z.boolean(),
+  maxOutputTokens: z.coerce
+    .number()
+    .int()
+    .min(256, "输出上限不能低于 256 tokens。")
+    .max(10_000, "输出上限不能超过 10000 tokens。"),
+  model: z
+    .string()
+    .trim()
+    .min(1, "请输入模型 ID。")
+    .max(120, "模型 ID 不能超过 120 个字符。")
+    .regex(/^[a-z0-9._:/-]+$/i, "模型 ID 含有不支持的字符。"),
+  provider: z.literal("openai"),
+  timeoutMs: z.coerce
+    .number()
+    .int()
+    .min(5_000, "超时时间不能低于 5 秒。")
+    .max(180_000, "超时时间不能超过 180 秒。"),
 });
 
 const investigationDetailsSchema = z.object({
@@ -1344,7 +1366,7 @@ export async function runAiReasoningAction(
   try {
     const service = new AiReasoningService(
       databaseConnection,
-      createConfiguredAiProvider(),
+      aiSettingsService.createProvider(),
     );
     const result = await service.startRun({ branchId, caseId, ...parsed.data });
     if (result.deduplicated) {
@@ -1475,7 +1497,7 @@ export async function retryAiReasoningAction(
   try {
     const service = new AiReasoningService(
       databaseConnection,
-      createConfiguredAiProvider(),
+      aiSettingsService.createProvider(),
     );
     const result = await service.retryRun(caseId, runId, parsed.data.requestKey);
     revalidateCase(caseId);
@@ -1488,6 +1510,50 @@ export async function retryAiReasoningAction(
   } catch (error) {
     return reasoningFailure(error, "重新推演失败，请稍后重试。");
   }
+}
+
+export async function updateAiSettingsAction(
+  caseId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  void _previousState;
+  const parsed = aiSettingsSchema.safeParse({
+    enabled: formData.get("enabled") === "on",
+    maxOutputTokens: readText(formData, "maxOutputTokens"),
+    model: readText(formData, "model"),
+    provider: readText(formData, "provider"),
+    timeoutMs: readText(formData, "timeoutMs"),
+  });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查 AI 运行设置。");
+  }
+  try {
+    aiSettingsService.save(parsed.data);
+  } catch (error) {
+    return persistenceFailure(error, "无法保存 AI 运行设置。");
+  }
+  revalidateCase(caseId);
+  return {
+    message: "AI 运行设置已保存；API Key 与接口地址仍由服务端环境变量管理。",
+    status: "success",
+  };
+}
+
+export async function diagnoseAiConnectionAction(
+  caseId: string,
+  _previousState: AiDiagnosticActionState,
+  _formData: FormData,
+): Promise<AiDiagnosticActionState> {
+  void _previousState;
+  void _formData;
+  const diagnostic = await aiSettingsService.diagnose();
+  revalidatePath(`/cases/${caseId}/reasoning/ai`);
+  return {
+    diagnostic,
+    message: diagnostic.message,
+    status: diagnostic.ok ? "success" : "error",
+  };
 }
 
 export async function createInvestigationAction(

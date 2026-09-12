@@ -145,8 +145,48 @@ export const investigationItemLinkRoles = [
   "context",
   "result",
 ] as const;
+export const aiProviderKinds = ["openai"] as const;
 
 const nowInMilliseconds = sql`(unixepoch() * 1000)`;
+
+export const aiRuntimeSettings = sqliteTable(
+  "ai_runtime_settings",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider", { enum: aiProviderKinds })
+      .notNull()
+      .default("openai"),
+    model: text("model").notNull(),
+    timeoutMs: integer("timeout_ms").notNull().default(60_000),
+    maxOutputTokens: integer("max_output_tokens").notNull().default(2_500),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+  },
+  (table) => [
+    check("ai_runtime_settings_singleton_check", sql`${table.id} = 'default'`),
+    check(
+      "ai_runtime_settings_provider_check",
+      sql`${table.provider} in ('openai')`,
+    ),
+    check(
+      "ai_runtime_settings_timeout_check",
+      sql`${table.timeoutMs} between 5000 and 180000`,
+    ),
+    check(
+      "ai_runtime_settings_output_check",
+      sql`${table.maxOutputTokens} between 256 and 10000`,
+    ),
+    check(
+      "ai_runtime_settings_enabled_check",
+      sql`${table.enabled} in (0, 1)`,
+    ),
+  ],
+);
 
 export const cases = sqliteTable(
   "cases",
@@ -1252,3 +1292,4 @@ export type InvestigationItemPriority =
   (typeof investigationItemPriorities)[number];
 export type InvestigationItemLinkRole =
   (typeof investigationItemLinkRoles)[number];
+export type AiProviderKind = (typeof aiProviderKinds)[number];

@@ -233,6 +233,21 @@ export class AiReasoningRepository {
       }));
   }
 
+  getRunDetailsForCase(caseId: string, runId: string): AiReasoningRun {
+    const result = this.connection.db
+      .select({ input: reasoningRunInputs, run: reasoningRuns })
+      .from(reasoningRuns)
+      .innerJoin(reasoningRunInputs, eq(reasoningRunInputs.runId, reasoningRuns.id))
+      .where(and(eq(reasoningRuns.id, runId), eq(reasoningRuns.caseId, caseId)))
+      .get();
+    if (!result) throw new Error("找不到这次 AI 推演或输入快照。");
+    return {
+      ...result.run,
+      input: result.input,
+      suggestions: this.listSuggestions(result.run.id),
+    };
+  }
+
   getRunForCase(caseId: string, runId: string) {
     const run = this.connection.db
       .select()

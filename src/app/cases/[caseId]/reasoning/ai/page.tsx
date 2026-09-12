@@ -8,6 +8,7 @@ import {
   AiSuggestionReview,
   RetryAiRunForm,
 } from "../../../../components/ai-reasoning-forms";
+import { AiSettingsPanel } from "../../../../components/ai-settings-panel";
 import { CaseWorkspaceFrame } from "../../../../components/case-workspace-frame";
 import { getAiReasoningWorkspace } from "../../../../data";
 import type { InvestigationItemView } from "@/db/repositories/investigation-repository";
@@ -23,6 +24,7 @@ export default async function AiReasoningPage({
   params: Promise<{ caseId: string }>;
   searchParams: Promise<{
     branch?: string | string[];
+    compare?: string | string[];
     view?: string | string[];
   }>;
 }) {
@@ -31,6 +33,8 @@ export default async function AiReasoningPage({
   const requestedBranchId =
     typeof query.branch === "string" ? query.branch : undefined;
   const requestedView = typeof query.view === "string" ? query.view : "all";
+  const comparisonBaseline =
+    typeof query.compare === "string" ? query.compare : undefined;
   const historyView: HistoryView = ["review", "failed"].includes(requestedView)
     ? (requestedView as HistoryView)
     : "all";
@@ -118,19 +122,7 @@ export default async function AiReasoningPage({
               模型原文始终保留。人工编辑作为新修订保存，采纳后也只能进入分支草稿、冲突审查或待调查区。
             </p>
           </section>
-          <section className="border-t border-[var(--line)] pt-5">
-            <p className="text-sm font-semibold">当前服务</p>
-            <div className="mt-3 source-summary">
-              <p className="font-mono text-xs uppercase tracking-[0.12em]">
-                {configuration.provider} · {configuration.model}
-              </p>
-              <p
-                className={`mt-2 text-sm ${configuration.configured ? "text-[var(--success)]" : "text-[var(--danger)]"}`}
-              >
-                {configuration.configured ? "服务端密钥已配置" : "尚未配置服务端密钥"}
-              </p>
-            </div>
-          </section>
+          <AiSettingsPanel caseId={caseId} settings={configuration} />
           <section className="border-t border-[var(--line)] pt-5">
             <p className="text-sm font-semibold">切换分支</p>
             <nav aria-label="AI 推演分支" className="branch-list mt-4">
@@ -210,13 +202,18 @@ export default async function AiReasoningPage({
               <div>
                 <p className="eyebrow">审计记录</p>
                 <h3 className="mt-2 text-xl font-semibold">运行与建议历史</h3>
+                {comparisonBaseline && (
+                  <p className="mt-2 text-sm text-[var(--muted)]">
+                    已选择运行 {comparisonBaseline.slice(0, 8)} 作为比较基准；请在另一条记录中点击比较。
+                  </p>
+                )}
               </div>
               <nav aria-label="运行记录筛选" className="flex flex-wrap gap-2">
                 {historyFilters.map((filter) => (
                   <Link
                     aria-current={historyView === filter.value ? "page" : undefined}
                     className={historyView === filter.value ? "primary-button" : "secondary-button"}
-                    href={`/cases/${caseId}/reasoning/ai?branch=${branch.id}&view=${filter.value}`}
+                    href={`/cases/${caseId}/reasoning/ai?branch=${branch.id}&view=${filter.value}${comparisonBaseline ? `&compare=${comparisonBaseline}` : ""}`}
                     key={filter.value}
                   >
                     {filter.label}
@@ -228,13 +225,15 @@ export default async function AiReasoningPage({
               <div className="grid gap-5">
                 {filteredRuns.map((run, index) => (
                   <RunCard
-                    caseId={caseId}
-                    claimReferences={claimReferences}
-                    configured={configuration.configured}
+                     caseId={caseId}
+                      claimReferences={claimReferences}
+                      comparisonBaseline={comparisonBaseline}
+                      configured={configuration.configured}
                     defaultOpen={index === 0 || run.suggestions.some(({ status }) => status === "pending")}
                     key={run.id}
-                    retryRequestKey={randomUUID()}
-                    run={run}
+                      retryRequestKey={randomUUID()}
+                      run={run}
+                      view={historyView}
                   />
                 ))}
               </div>
@@ -263,17 +262,21 @@ export default async function AiReasoningPage({
 function RunCard({
   caseId,
   claimReferences,
+  comparisonBaseline,
   configured,
   defaultOpen,
   retryRequestKey,
   run,
+  view,
 }: {
   caseId: string;
   claimReferences: Record<string, ClaimReference>;
+  comparisonBaseline?: string;
   configured: boolean;
   defaultOpen: boolean;
   retryRequestKey: string;
   run: AiReasoningRunView;
+  view: HistoryView;
 }) {
   const stats = readSnapshotStats(run.input.contextJson);
   const labels = Object.fromEntries(
@@ -309,6 +312,33 @@ function RunCard({
         {run.durationMs !== null && <span>{(run.durationMs / 1000).toFixed(1)} 秒</span>}
         {run.focusClaimId && <span>聚焦：{truncate(claimReferences[run.focusClaimId]?.content ?? run.focusClaimId, 34)}</span>}
         <span className="font-mono">RUN · {run.id.slice(0, 8)}</span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {comparisonBaseline === run.id ? (
+          <>
+            <span className="record-badge">比较基准</span>
+            <Link
+              className="text-xs font-semibold text-[var(--accent)]"
+              href={`/cases/${caseId}/reasoning/ai?branch=${run.branchId}&view=${view}`}
+            >
+              取消选择
+            </Link>
+          </>
+        ) : comparisonBaseline ? (
+          <Link
+            className="text-xs font-semibold text-[var(--accent)]"
+            href={`/cases/${caseId}/reasoning/ai/compare?left=${comparisonBaseline}&right=${run.id}`}
+          >
+            与基准比较 →
+          </Link>
+        ) : (
+          <Link
+            className="text-xs font-semibold text-[var(--accent)]"
+            href={`/cases/${caseId}/reasoning/ai?branch=${run.branchId}&view=${view}&compare=${run.id}`}
+          >
+            选作比较基准
+          </Link>
+        )}
       </div>
       {(run.userPrompt || run.errorCode || run.retryOfRunId) && (
         <div className="mt-4 rounded-xl border border-[var(--line)] bg-white/40 p-3 text-xs leading-5 text-[var(--muted)]">

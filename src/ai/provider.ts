@@ -25,6 +25,33 @@ export interface ReasoningModelProvider {
   generate(request: ReasoningModelRequest): Promise<ReasoningModelResult>;
 }
 
+export type AiConnectionDiagnosticCode =
+  | "authentication"
+  | "disabled"
+  | "model"
+  | "network"
+  | "not_configured"
+  | "provider"
+  | "rate_limit"
+  | "timeout";
+
+export class AiConnectionDiagnosticError extends Error {
+  readonly code: Exclude<
+    AiConnectionDiagnosticCode,
+    "disabled" | "not_configured"
+  >;
+
+  constructor(
+    code: Exclude<AiConnectionDiagnosticCode, "disabled" | "not_configured">,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.code = code;
+    this.name = "AiConnectionDiagnosticError";
+  }
+}
+
 export type ReasoningProviderErrorCode =
   | "authentication"
   | "rate_limit"

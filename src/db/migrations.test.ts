@@ -438,3 +438,76 @@ describe("investigation workflow migration", () => {
     }
   });
 });
+
+describe("AI runtime settings migration", () => {
+  it("adds constrained non-secret settings without changing existing runs", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    try {
+      for (const migration of [
+        "0000_initial_schema.sql",
+        "0001_timeline_precision_and_event_revisions.sql",
+        "0002_evidence_source_revisions.sql",
+        "0003_reasoning_reviews_and_conflicts.sql",
+        "0004_ai_reasoning_runs.sql",
+        "0005_ai_review_loop.sql",
+        "0006_investigation_workflow.sql",
+      ]) {
+        runMigration(sqlite, migration);
+      }
+      sqlite.prepare("insert into cases (id, title) values (?, ?)").run(
+        "case-1",
+        "已有 AI 案件",
+      );
+      sqlite
+        .prepare("insert into reasoning_branches (id, case_id, name) values (?, ?, ?)")
+        .run("branch-1", "case-1", "主线");
+      sqlite
+        .prepare(
+          `insert into reasoning_runs (
+            id, case_id, branch_id, mode, status, provider, model, summary
+          ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "run-1",
+          "case-1",
+          "branch-1",
+          "consistency_check",
+          "completed",
+          "openai",
+          "old-model",
+          "原运行仍应保留",
+        );
+
+      runMigration(sqlite, "0007_ai_runtime_settings.sql");
+
+      expect(
+        sqlite.prepare("select model, summary from reasoning_runs where id = ?").get("run-1"),
+      ).toEqual({ model: "old-model", summary: "原运行仍应保留" });
+      sqlite
+        .prepare(
+          `insert into ai_runtime_settings (
+            id, provider, model, timeout_ms, max_output_tokens, enabled
+          ) values (?, ?, ?, ?, ?, ?)`,
+        )
+        .run("default", "openai", "gpt-test", 60000, 2500, 1);
+      expect(
+        sqlite.prepare("select model, timeout_ms, max_output_tokens, enabled from ai_runtime_settings").get(),
+      ).toEqual({
+        enabled: 1,
+        max_output_tokens: 2500,
+        model: "gpt-test",
+        timeout_ms: 60000,
+      });
+      expect(() =>
+        sqlite
+          .prepare("update ai_runtime_settings set timeout_ms = ? where id = ?")
+          .run(1000, "default"),
+      ).toThrow();
+      expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+});
