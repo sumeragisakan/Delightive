@@ -16,6 +16,7 @@ Delightive is a reasoning workspace for detective stories and mystery analysis. 
 - React and TypeScript
 - Tailwind CSS
 - Drizzle ORM and SQLite
+- React Flow with ELK layered graph layout
 - pnpm
 
 The SQLite database is local by default. The persistence boundary is kept on the server so a remote database can replace it later without coupling UI code to a specific driver.
@@ -43,6 +44,7 @@ The SQLite database is local by default. The persistence boundary is kept on the
 - Configure the model, request timeout, output-token limit, and AI availability from the workspace while keeping credentials server-only.
 - Run a privacy-safe connection diagnostic and compare any two historical runs across their immutable inputs, outputs, and human review state without another API call.
 - Search across cases, people and aliases, locations, events, sources, facts, reasoning branches, investigations, and AI results with case, branch, layer, status, author, type, and archive filters.
+- Visualize the selected branch as a read-only, layered reasoning flow from context and fixed facts through trusted inferences, exploration, AI suggestions, contradictions, and investigation actions; filter, trace, inspect, or switch to an accessible outline without weakening branch isolation.
 
 ## Local development
 
@@ -105,4 +107,5 @@ Migration files under `drizzle/` are committed. Local database files under `.dat
 7. ~~Add versioned case export/import and whole-database backup.~~
 8. ~~Add model controls, connection diagnostics, and reasoning-run comparison.~~
 9. ~~Add cross-case search and structured filtering.~~
-10. Add evidence/reasoning visualization and a printable reasoning report.
+10. ~~Add branch-aware evidence and reasoning-flow visualization.~~
+11. Add a printable reasoning report.

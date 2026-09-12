@@ -13,6 +13,7 @@ import { AiReasoningService } from "@/db/services/ai-reasoning-service";
 import { AiRunComparisonService } from "@/db/services/ai-run-comparison-service";
 import { AiSettingsService } from "@/db/services/ai-settings-service";
 import { buildReasoningContext } from "@/db/services/reasoning-context-service";
+import { ReasoningGraphService } from "@/db/services/reasoning-graph-service";
 import {
   parseSearchFilters,
   SearchService,
@@ -27,6 +28,7 @@ const reasoningWorkspaceRepository = new ReasoningWorkspaceRepository(
   databaseConnection,
 );
 const aiSettingsService = new AiSettingsService(databaseConnection);
+const reasoningGraphService = new ReasoningGraphService(databaseConnection);
 const searchService = new SearchService(databaseConnection);
 
 export async function getCaseDashboard() {
@@ -94,6 +96,18 @@ export async function getReasoningWorkspace(
   return {
     caseFile,
     workspace: reasoningWorkspaceRepository.getWorkspace(caseId, branchId),
+  };
+}
+
+export async function getReasoningGraphWorkspace(
+  caseId: string,
+  branchId?: string | null,
+) {
+  await connection();
+  const caseFile = caseRepository.getCaseSummary(caseId);
+  return {
+    caseFile,
+    graph: caseFile ? reasoningGraphService.build(caseId, branchId) : null,
   };
 }
 

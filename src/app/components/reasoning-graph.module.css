@@ -1,0 +1,370 @@
+.workspace {
+  display: grid;
+  gap: 1rem;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.55);
+  padding: 0.75rem;
+}
+
+.search {
+  min-height: 2.55rem;
+  min-width: min(18rem, 100%);
+  flex: 1 1 15rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: white;
+  padding: 0.55rem 0.75rem;
+  color: var(--ink);
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.toggle,
+.viewButton {
+  display: inline-flex;
+  min-height: 2.55rem;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 0.55rem 0.72rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.toggle:has(input:checked),
+.viewButtonActive {
+  border-color: rgba(154, 56, 46, 0.36);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.toggle input {
+  accent-color: var(--accent);
+}
+
+.viewSwitch {
+  display: inline-flex;
+  gap: 0.25rem;
+  border-left: 1px solid var(--line);
+  padding-left: 0.65rem;
+}
+
+.viewButton {
+  min-height: 2.25rem;
+  border-color: transparent;
+  background: transparent;
+  padding-block: 0.4rem;
+}
+
+.canvasShell {
+  position: relative;
+  height: min(69vh, 50rem);
+  min-height: 36rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 1.2rem;
+  background:
+    linear-gradient(90deg, rgba(154, 56, 46, 0.025), transparent 30%),
+    #f7f5ee;
+}
+
+.flow {
+  background: transparent;
+}
+
+.loading,
+.empty {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background: rgba(247, 245, 238, 0.88);
+  color: var(--muted);
+  text-align: center;
+}
+
+.node {
+  position: relative;
+  width: 16.25rem;
+  border: 1px solid #cfc8b9;
+  border-left: 0.32rem solid var(--lane-color, var(--accent));
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 9px 25px rgba(24, 32, 37, 0.11);
+  transition: border-color 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+}
+
+.nodeSelected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 14px 32px rgba(24, 32, 37, 0.16);
+}
+
+.nodeDimmed {
+  opacity: 0.45;
+}
+
+.nodeButton {
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  padding: 0.8rem 0.85rem 0.85rem;
+  color: inherit;
+  text-align: left;
+}
+
+.nodeButton:focus-visible {
+  border-radius: 0.7rem;
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 2px;
+}
+
+.nodeMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.nodeTitle {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 0.5rem;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.nodeFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.62rem;
+}
+
+.badge,
+.issueBadge {
+  border-radius: 999px;
+  background: #eeece5;
+  padding: 0.22rem 0.45rem;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.issueBadge {
+  background: rgba(163, 49, 42, 0.11);
+  color: var(--danger);
+}
+
+.handle {
+  width: 0.55rem !important;
+  height: 0.55rem !important;
+  border: 2px solid white !important;
+  background: var(--lane-color, var(--accent)) !important;
+}
+
+.context { --lane-color: #6d7480; }
+.fixed { --lane-color: #355f79; }
+.trusted { --lane-color: #31684b; }
+.exploration { --lane-color: #9a382e; }
+.action { --lane-color: #a57622; }
+
+.outline {
+  display: grid;
+  gap: 1rem;
+}
+
+.outlineGroup {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.outlineHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding: 0.75rem 0.9rem;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.outlineList {
+  display: grid;
+}
+
+.outlineItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  width: 100%;
+  cursor: pointer;
+  border: 0;
+  border-bottom: 1px solid rgba(216, 211, 200, 0.75);
+  background: transparent;
+  padding: 0.78rem 0.9rem;
+  color: var(--ink);
+  text-align: left;
+}
+
+.outlineItem:last-child {
+  border-bottom: 0;
+}
+
+.outlineItem:hover,
+.outlineItemActive {
+  background: var(--accent-soft);
+}
+
+.outlineItem small {
+  color: var(--muted);
+}
+
+.inspector {
+  display: grid;
+  gap: 1rem;
+}
+
+.inspectorBody {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.48rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+.detailGrid dt {
+  color: var(--muted);
+}
+
+.detailGrid dd {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.issueList,
+.relationList {
+  display: grid;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.issueList {
+  color: var(--danger);
+}
+
+.relationList li {
+  border-left: 2px solid var(--line);
+  padding-left: 0.6rem;
+  color: var(--muted);
+}
+
+.legend {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.legendSwatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--lane-color);
+}
+
+.flow :global(.react-flow__controls) {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  box-shadow: 0 5px 18px rgba(24, 32, 37, 0.12);
+}
+
+.flow :global(.react-flow__controls-button) {
+  border-bottom-color: var(--line);
+  background: white;
+}
+
+.flow :global(.react-flow__edge-textbg) {
+  fill: #fbfaf5;
+}
+
+.flow :global(.react-flow__edge-text) {
+  fill: #596165;
+  font-size: 9px;
+}
+
+@media (max-width: 640px) {
+  .canvasShell {
+    height: 34rem;
+    min-height: 34rem;
+  }
+
+  .viewSwitch {
+    width: 100%;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+    padding-top: 0.55rem;
+    padding-left: 0;
+  }
+
+  .minimap {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node,
+  .toggle,
+  .viewButton {
+    transition: none;
+  }
+}

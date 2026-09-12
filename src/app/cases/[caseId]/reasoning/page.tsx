@@ -160,12 +160,20 @@ export default async function ReasoningPage({
         </div>
         <div className="flex flex-wrap gap-2">
           {workspace.selectedBranch && (
-            <Link
-              className="secondary-button"
-              href={`/cases/${caseId}/reasoning/ai?branch=${workspace.selectedBranch.id}`}
-            >
-              AI 辅助推演
-            </Link>
+            <>
+              <Link
+                className="secondary-button"
+                href={`/cases/${caseId}/reasoning/graph?branch=${workspace.selectedBranch.id}`}
+              >
+                查看推理图
+              </Link>
+              <Link
+                className="secondary-button"
+                href={`/cases/${caseId}/reasoning/ai?branch=${workspace.selectedBranch.id}`}
+              >
+                AI 辅助推演
+              </Link>
+            </>
           )}
           <span className="reasoning-layer-badge reasoning-layer-trusted">
             1.5 可信推论 · {workspace.acceptedInferences.length}

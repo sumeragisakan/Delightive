@@ -10,6 +10,7 @@ export function CaseWorkspaceFrame({
 }: {
   activeModule:
     | "evidence"
+    | "graph"
     | "investigations"
     | "people"
     | "reasoning"
@@ -99,6 +100,12 @@ export function CaseWorkspaceFrame({
             href={`/cases/${caseFile.id}/reasoning`}
           >
             推理
+          </WorkspaceLink>
+          <WorkspaceLink
+            active={activeModule === "graph"}
+            href={`/cases/${caseFile.id}/reasoning/graph`}
+          >
+            推理图
           </WorkspaceLink>
           <WorkspaceLink
             active={activeModule === "investigations"}
