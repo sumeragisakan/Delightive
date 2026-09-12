@@ -10,8 +10,6 @@ import type { DatabaseConnection } from "../connection";
 import {
   cases,
   claims,
-  investigationItemClaims,
-  investigationItems,
   reasoningBranches,
   reasoningRunInputs,
   reasoningRuns,
@@ -26,7 +24,6 @@ type RunRow = typeof reasoningRuns.$inferSelect;
 type RunInputRow = typeof reasoningRunInputs.$inferSelect;
 type SuggestionRow = typeof reasoningSuggestions.$inferSelect;
 type SuggestionEditRow = typeof reasoningSuggestionEdits.$inferSelect;
-type InvestigationItemRow = typeof investigationItems.$inferSelect;
 
 export type EditableSuggestion = {
   citations: ReasoningCitation[];
@@ -52,14 +49,6 @@ export type AiSuggestion = SuggestionRow & {
 export type AiReasoningRun = RunRow & {
   input: RunInputRow;
   suggestions: AiSuggestion[];
-};
-
-export type InvestigationItem = InvestigationItemRow & {
-  claims: Array<{
-    claimId: string;
-    claimRevision: number;
-    role: "target" | "context";
-  }>;
 };
 
 export class AiReasoningRepository {
@@ -343,74 +332,6 @@ export class AiReasoningRepository {
       .get();
     if (!updated) throw new Error("这条建议已经处理，不能重复操作。");
     return updated;
-  }
-
-  createInvestigationItem(input: {
-    branchId: string;
-    caseId: string;
-    citations: ReasoningCitation[];
-    notes: string;
-    originSuggestionId: string;
-    question: string;
-    targetClaimId: string | null;
-    title: string;
-  }) {
-    const item = this.connection.db
-      .insert(investigationItems)
-      .values({
-        branchId: input.branchId,
-        caseId: input.caseId,
-        createdBy: "ai",
-        id: randomUUID(),
-        notes: input.notes,
-        originSuggestionId: input.originSuggestionId,
-        question: input.question,
-        title: input.title,
-      })
-      .returning()
-      .get();
-    const byClaim = new Map<string, ReasoningCitation>();
-    for (const citation of input.citations) {
-      if (!byClaim.has(citation.claimId)) byClaim.set(citation.claimId, citation);
-    }
-    for (const citation of byClaim.values()) {
-      this.connection.db
-        .insert(investigationItemClaims)
-        .values({
-          claimId: citation.claimId,
-          claimRevision: citation.revision,
-          investigationItemId: item.id,
-          role: citation.claimId === input.targetClaimId ? "target" : "context",
-        })
-        .run();
-    }
-    return item;
-  }
-
-  listInvestigationItems(caseId: string, branchId: string): InvestigationItem[] {
-    return this.connection.db
-      .select()
-      .from(investigationItems)
-      .where(
-        and(
-          eq(investigationItems.caseId, caseId),
-          eq(investigationItems.branchId, branchId),
-        ),
-      )
-      .orderBy(desc(investigationItems.createdAt))
-      .all()
-      .map((item) => ({
-        ...item,
-        claims: this.connection.db
-          .select({
-            claimId: investigationItemClaims.claimId,
-            claimRevision: investigationItemClaims.claimRevision,
-            role: investigationItemClaims.role,
-          })
-          .from(investigationItemClaims)
-          .where(eq(investigationItemClaims.investigationItemId, item.id))
-          .all(),
-      }));
   }
 
   private listSuggestions(runId: string) {

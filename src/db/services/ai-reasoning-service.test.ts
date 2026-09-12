@@ -272,7 +272,10 @@ describe("AI reasoning review loop", () => {
       status: "pending",
     });
     expect(service.listInvestigationItems(mystery.id, branch.id)[0].claims).toEqual([
-      expect.objectContaining({ claimId: fact.id, role: "target" }),
+      expect.objectContaining({
+        claim: expect.objectContaining({ id: fact.id }),
+        role: "target",
+      }),
     ]);
   });
 

@@ -43,6 +43,13 @@
       "when": 1789188855827,
       "tag": "0005_ai_review_loop",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789191328426,
+      "tag": "0006_investigation_workflow",
+      "breakpoints": true
     }
   ]
 }

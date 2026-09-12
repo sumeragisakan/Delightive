@@ -13,6 +13,7 @@ import {
   claimRevisions,
   claims,
   contradictionReviews,
+  investigationItems,
   reasoningBranches,
 } from "../schema";
 import { invalidateDownstreamClaims } from "../services/invalidation-service";
@@ -190,6 +191,19 @@ export class ReasoningWorkspaceRepository {
         .get();
       if (activeChild) {
         throw new Error("Archive active child branches first.");
+      }
+      const openInvestigation = this.connection.db
+        .select({ id: investigationItems.id })
+        .from(investigationItems)
+        .where(
+          and(
+            eq(investigationItems.branchId, branchId),
+            inArray(investigationItems.status, ["pending", "in_progress"]),
+          ),
+        )
+        .get();
+      if (openInvestigation) {
+        throw new Error("归档分支前，请先结束其中仍在进行的调查事项。");
       }
     } else if (branch.parentBranchId) {
       this.getActiveBranchOrThrow(caseId, branch.parentBranchId);

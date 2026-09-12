@@ -10,7 +10,7 @@ import {
 } from "../../../../components/ai-reasoning-forms";
 import { CaseWorkspaceFrame } from "../../../../components/case-workspace-frame";
 import { getAiReasoningWorkspace } from "../../../../data";
-import type { InvestigationItem } from "@/db/repositories/ai-reasoning-repository";
+import type { InvestigationItemView } from "@/db/repositories/investigation-repository";
 import type { AiReasoningRunView } from "@/db/services/ai-reasoning-service";
 
 type ClaimReference = { content: string; href: string };
@@ -280,7 +280,7 @@ function RunCard({
     Object.entries(claimReferences).map(([id, value]) => [id, value.content]),
   );
   return (
-    <details className="reasoning-card" open={defaultOpen}>
+    <details className="reasoning-card scroll-mt-8" id={`run-${run.id}`} open={defaultOpen}>
       <summary className="cursor-pointer list-none marker:hidden">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -401,18 +401,20 @@ function InvestigationQueue({
   items,
 }: {
   claimReferences: Record<string, ClaimReference>;
-  items: InvestigationItem[];
+  items: InvestigationItemView[];
 }) {
   if (items.length === 0) return null;
   return (
     <section className="mt-10">
-      <div className="mb-4 flex items-end justify-between border-b border-[var(--line)] pb-4">
+      <div className="mb-4 flex flex-col gap-3 border-b border-[var(--line)] pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="eyebrow">调查移交</p>
           <h3 className="mt-2 text-xl font-semibold">AI 发现的待调查事项</h3>
-          <p className="mt-2 text-sm text-[var(--muted)]">这里先保留轻量队列；完整任务管理会在下一阶段展开。</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">AI 缺口已进入完整调查工作流，可继续关联资料、记录结果并生成待审核草稿。</p>
         </div>
-        <span className="record-badge">{items.length} 项</span>
+        <Link className="secondary-button" href={`/cases/${items[0].caseId}/investigations?branch=${items[0].branchId}`}>
+          打开调查工作区 · {items.length}
+        </Link>
       </div>
       <div className="grid gap-3">
         {items.map((item) => (
@@ -424,9 +426,9 @@ function InvestigationQueue({
             <h4 className="mt-3 font-semibold">{item.title}</h4>
             <p className="mt-2 leading-7">{item.question}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {item.claims.map((claim) => {
-                const reference = claimReferences[claim.claimId];
-                return <Link className="evidence-link" href={reference?.href ?? "#"} key={claim.claimId}>{claim.role === "target" ? "目标" : "上下文"} · {truncate(reference?.content ?? claim.claimId, 38)} · r{claim.claimRevision}</Link>;
+              {item.claims.map(({ claim, claimRevision, role }) => {
+                const reference = claimReferences[claim.id];
+                return <Link className="evidence-link" href={reference?.href ?? "#"} key={claim.id}>{role === "target" ? "目标" : role === "result" ? "结果" : "上下文"} · {truncate(reference?.content ?? claim.content, 38)} · r{claimRevision}</Link>;
               })}
             </div>
           </article>

@@ -12,6 +12,7 @@ import { CaseRepository } from "@/db/repositories/case-repository";
 import { EvidenceRepository } from "@/db/repositories/evidence-repository";
 import { EventRepository } from "@/db/repositories/event-repository";
 import { LocationRepository } from "@/db/repositories/location-repository";
+import { InvestigationRepository } from "@/db/repositories/investigation-repository";
 import { ReasoningWorkspaceRepository } from "@/db/repositories/reasoning-workspace-repository";
 import { AiReasoningService } from "@/db/services/ai-reasoning-service";
 import type {
@@ -23,6 +24,7 @@ const caseRepository = new CaseRepository(databaseConnection);
 const evidenceRepository = new EvidenceRepository(databaseConnection);
 const eventRepository = new EventRepository(databaseConnection);
 const locationRepository = new LocationRepository(databaseConnection);
+const investigationRepository = new InvestigationRepository(databaseConnection);
 const reasoningWorkspaceRepository = new ReasoningWorkspaceRepository(
   databaseConnection,
 );
@@ -377,6 +379,75 @@ const aiRetrySchema = z.object({
     .trim()
     .regex(/^[a-f0-9-]{16,64}$/i, "重试请求标识无效，请刷新页面重试。"),
 });
+
+const investigationDetailsSchema = z.object({
+  claimIds: z.array(z.string().trim().min(1)).max(50),
+  eventIds: z.array(z.string().trim().min(1)).max(50),
+  locationIds: z.array(z.string().trim().min(1)).max(50),
+  notes: z.string().trim().max(4_000, "调查笔记不能超过 4000 个字符。"),
+  personIds: z.array(z.string().trim().min(1)).max(50),
+  priority: z.enum(["low", "normal", "high", "urgent"], {
+    error: "请选择有效的优先级。",
+  }),
+  question: z
+    .string()
+    .trim()
+    .min(1, "请输入待验证问题。")
+    .max(8_000, "待验证问题不能超过 8000 个字符。"),
+  sourceIds: z.array(z.string().trim().min(1)).max(50),
+  targetClaimId: optionalIdSchema,
+  title: z
+    .string()
+    .trim()
+    .min(1, "请输入调查标题。")
+    .max(160, "调查标题不能超过 160 个字符。"),
+});
+
+const investigationStatusSchema = z.object({
+  note: z.string().trim().max(2_000, "状态说明不能超过 2000 个字符。"),
+});
+
+const investigationCompletionSchema = z
+  .object({
+    draftClaimContent: z.string().trim().max(8_000, "草稿命题不能超过 8000 个字符。"),
+    draftClaimKind: z.enum(["fact", "statement"], {
+      error: "请选择有效的命题类型。",
+    }),
+    existingSourceId: optionalIdSchema,
+    newSourceExcerpt: z.string().trim().max(8_000, "来源摘录不能超过 8000 个字符。"),
+    newSourceKind: sourceKindSchema,
+    newSourceLocator: z.string().trim().max(300, "来源定位不能超过 300 个字符。"),
+    newSourceNotes: z.string().trim().max(4_000, "来源备注不能超过 4000 个字符。"),
+    newSourceTitle: z.string().trim().max(160, "来源标题不能超过 160 个字符。"),
+    outcome: z.enum(["resolved", "unresolved"], {
+      error: "请选择调查结果状态。",
+    }),
+    resultSummary: z
+      .string()
+      .trim()
+      .min(1, "请输入调查结果。")
+      .max(8_000, "调查结果不能超过 8000 个字符。"),
+    sourceMode: z.enum(["none", "existing", "new"], {
+      error: "请选择来源记录方式。",
+    }),
+    speakerPersonId: optionalIdSchema,
+  })
+  .superRefine((value, context) => {
+    if (value.sourceMode === "existing" && !value.existingSourceId) {
+      context.addIssue({
+        code: "custom",
+        message: "请选择一条既有来源。",
+        path: ["existingSourceId"],
+      });
+    }
+    if (value.sourceMode === "new" && !value.newSourceTitle) {
+      context.addIssue({
+        code: "custom",
+        message: "请输入新来源标题。",
+        path: ["newSourceTitle"],
+      });
+    }
+  });
 
 export async function createCaseAction(
   _previousState: ActionState,
@@ -1419,6 +1490,175 @@ export async function retryAiReasoningAction(
   }
 }
 
+export async function createInvestigationAction(
+  caseId: string,
+  branchId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = investigationDetailsSchema.safeParse(
+    readInvestigationDetails(formData),
+  );
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查调查事项内容。");
+  }
+  try {
+    investigationRepository.createItem({
+      associations: {
+        claimIds: parsed.data.claimIds,
+        eventIds: parsed.data.eventIds,
+        locationIds: parsed.data.locationIds,
+        personIds: parsed.data.personIds,
+        sourceIds: parsed.data.sourceIds,
+        targetClaimId: parsed.data.targetClaimId,
+      },
+      branchId,
+      caseId,
+      notes: parsed.data.notes,
+      priority: parsed.data.priority,
+      question: parsed.data.question,
+      title: parsed.data.title,
+    });
+  } catch (error) {
+    return reasoningFailure(error, "无法建立调查事项。");
+  }
+  revalidateCase(caseId);
+  return { message: "调查事项已加入当前路线。", status: "success" };
+}
+
+export async function updateInvestigationAction(
+  caseId: string,
+  itemId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = investigationDetailsSchema.safeParse(
+    readInvestigationDetails(formData),
+  );
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查调查事项内容。");
+  }
+  try {
+    investigationRepository.updateItem(caseId, itemId, {
+      associations: {
+        claimIds: parsed.data.claimIds,
+        eventIds: parsed.data.eventIds,
+        locationIds: parsed.data.locationIds,
+        personIds: parsed.data.personIds,
+        sourceIds: parsed.data.sourceIds,
+        targetClaimId: parsed.data.targetClaimId,
+      },
+      notes: parsed.data.notes,
+      priority: parsed.data.priority,
+      question: parsed.data.question,
+      title: parsed.data.title,
+    });
+  } catch (error) {
+    return reasoningFailure(error, "无法保存调查事项。");
+  }
+  revalidateCase(caseId);
+  return { message: "调查事项已更新。", status: "success" };
+}
+
+export async function changeInvestigationStatusAction(
+  caseId: string,
+  itemId: string,
+  toStatus: "pending" | "in_progress",
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const target = z.enum(["pending", "in_progress"]).safeParse(toStatus);
+  if (!target.success) {
+    return { message: "调查状态无效，请刷新页面后重试。", status: "error" };
+  }
+  const parsed = investigationStatusSchema.safeParse({
+    note: readText(formData, "note"),
+  });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查状态说明。");
+  }
+  try {
+    investigationRepository.changeStatus(
+      caseId,
+      itemId,
+      target.data,
+      parsed.data.note,
+    );
+  } catch (error) {
+    return reasoningFailure(error, "无法变更调查状态。");
+  }
+  revalidateCase(caseId);
+  return {
+    message: toStatus === "in_progress" ? "调查已开始。" : "调查已重新进入待处理队列。",
+    status: "success",
+  };
+}
+
+export async function completeInvestigationAction(
+  caseId: string,
+  itemId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = investigationCompletionSchema.safeParse({
+    draftClaimContent: readText(formData, "draftClaimContent"),
+    draftClaimKind: readText(formData, "draftClaimKind"),
+    existingSourceId: readText(formData, "existingSourceId"),
+    newSourceExcerpt: readText(formData, "newSourceExcerpt"),
+    newSourceKind: readText(formData, "newSourceKind"),
+    newSourceLocator: readText(formData, "newSourceLocator"),
+    newSourceNotes: readText(formData, "newSourceNotes"),
+    newSourceTitle: readText(formData, "newSourceTitle"),
+    outcome: readText(formData, "outcome"),
+    resultSummary: readText(formData, "resultSummary"),
+    sourceMode: readText(formData, "sourceMode"),
+    speakerPersonId: readText(formData, "speakerPersonId"),
+  });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查调查结果。");
+  }
+  const value = parsed.data;
+  try {
+    const result = investigationRepository.completeItem({
+      caseId,
+      draftClaim: value.draftClaimContent
+        ? {
+            content: value.draftClaimContent,
+            kind: value.draftClaimKind,
+            speakerPersonId:
+              value.draftClaimKind === "statement"
+                ? value.speakerPersonId
+                : null,
+          }
+        : null,
+      existingSourceId:
+        value.sourceMode === "existing" ? value.existingSourceId : null,
+      itemId,
+      newSource:
+        value.sourceMode === "new"
+          ? {
+              excerpt: value.newSourceExcerpt || null,
+              kind: value.newSourceKind,
+              locator: value.newSourceLocator || null,
+              notes: value.newSourceNotes,
+              title: value.newSourceTitle,
+            }
+          : null,
+      outcome: value.outcome,
+      resultSummary: value.resultSummary,
+    });
+    revalidateCase(caseId);
+    return {
+      message: result.claim
+        ? "调查已结束，结果命题已作为待审核草稿加入事实与来源。"
+        : "调查结果已记录。",
+      status: "success",
+    };
+  } catch (error) {
+    return reasoningFailure(error, "无法保存调查结果。");
+  }
+}
+
 function readCaseForm(formData: FormData) {
   return {
     description: readText(formData, "description"),
@@ -1517,6 +1757,27 @@ function readText(formData: FormData, key: string) {
   return typeof value === "string" ? value : "";
 }
 
+function readTextList(formData: FormData, key: string) {
+  return formData
+    .getAll(key)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function readInvestigationDetails(formData: FormData) {
+  return {
+    claimIds: readTextList(formData, "claimIds"),
+    eventIds: readTextList(formData, "eventIds"),
+    locationIds: readTextList(formData, "locationIds"),
+    notes: readText(formData, "notes"),
+    personIds: readTextList(formData, "personIds"),
+    priority: readText(formData, "priority"),
+    question: readText(formData, "question"),
+    sourceIds: readTextList(formData, "sourceIds"),
+    targetClaimId: readText(formData, "targetClaimId"),
+    title: readText(formData, "title"),
+  };
+}
+
 function readCitationForm(formData: FormData):
   | { data: Array<z.infer<typeof reasoningCitationSchema>>; success: true }
   | { message: string; success: false } {
@@ -1580,6 +1841,7 @@ function revalidateCase(caseId: string) {
   revalidatePath(`/cases/${caseId}/evidence`);
   revalidatePath(`/cases/${caseId}/reasoning`);
   revalidatePath(`/cases/${caseId}/reasoning/ai`);
+  revalidatePath(`/cases/${caseId}/investigations`);
 }
 
 function parseDuration(value: string) {

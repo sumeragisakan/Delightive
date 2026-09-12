@@ -134,6 +134,17 @@ export const investigationItemStatuses = [
   "resolved",
   "unresolved",
 ] as const;
+export const investigationItemPriorities = [
+  "low",
+  "normal",
+  "high",
+  "urgent",
+] as const;
+export const investigationItemLinkRoles = [
+  "target",
+  "context",
+  "result",
+] as const;
 
 const nowInMilliseconds = sql`(unixepoch() * 1000)`;
 
@@ -1006,9 +1017,13 @@ export const investigationItems = sqliteTable(
     title: text("title").notNull(),
     question: text("question").notNull(),
     notes: text("notes").notNull().default(""),
+    resultSummary: text("result_summary").notNull().default(""),
     status: text("status", { enum: investigationItemStatuses })
       .notNull()
       .default("pending"),
+    priority: text("priority", { enum: investigationItemPriorities })
+      .notNull()
+      .default("normal"),
     createdBy: text("created_by", { enum: actorKinds })
       .notNull()
       .default("user"),
@@ -1018,6 +1033,7 @@ export const investigationItems = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp_ms" })
       .notNull()
       .default(nowInMilliseconds),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
     resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
   },
   (table) => [
@@ -1029,6 +1045,10 @@ export const investigationItems = sqliteTable(
     check(
       "investigation_items_status_check",
       sql`${table.status} in ('pending', 'in_progress', 'resolved', 'unresolved')`,
+    ),
+    check(
+      "investigation_items_priority_check",
+      sql`${table.priority} in ('low', 'normal', 'high', 'urgent')`,
     ),
     check(
       "investigation_items_actor_check",
@@ -1047,7 +1067,7 @@ export const investigationItemClaims = sqliteTable(
       .notNull()
       .references(() => claims.id, { onDelete: "cascade" }),
     claimRevision: integer("claim_revision").notNull(),
-    role: text("role", { enum: ["target", "context"] })
+    role: text("role", { enum: investigationItemLinkRoles })
       .notNull()
       .default("context"),
   },
@@ -1060,7 +1080,152 @@ export const investigationItemClaims = sqliteTable(
     ),
     check(
       "investigation_item_claims_role_check",
+      sql`${table.role} in ('target', 'context', 'result')`,
+    ),
+  ],
+);
+
+export const investigationItemPeople = sqliteTable(
+  "investigation_item_people",
+  {
+    investigationItemId: text("investigation_item_id")
+      .notNull()
+      .references(() => investigationItems.id, { onDelete: "cascade" }),
+    personId: text("person_id")
+      .notNull()
+      .references(() => people.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["target", "context"] })
+      .notNull()
+      .default("context"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.investigationItemId, table.personId] }),
+    index("investigation_item_people_person_idx").on(table.personId),
+    check(
+      "investigation_item_people_role_check",
       sql`${table.role} in ('target', 'context')`,
+    ),
+  ],
+);
+
+export const investigationItemEvents = sqliteTable(
+  "investigation_item_events",
+  {
+    investigationItemId: text("investigation_item_id")
+      .notNull()
+      .references(() => investigationItems.id, { onDelete: "cascade" }),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    eventRevision: integer("event_revision").notNull(),
+    role: text("role", { enum: ["target", "context"] })
+      .notNull()
+      .default("context"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.investigationItemId, table.eventId] }),
+    index("investigation_item_events_event_idx").on(table.eventId),
+    check(
+      "investigation_item_events_revision_check",
+      sql`${table.eventRevision} >= 1`,
+    ),
+    check(
+      "investigation_item_events_role_check",
+      sql`${table.role} in ('target', 'context')`,
+    ),
+  ],
+);
+
+export const investigationItemLocations = sqliteTable(
+  "investigation_item_locations",
+  {
+    investigationItemId: text("investigation_item_id")
+      .notNull()
+      .references(() => investigationItems.id, { onDelete: "cascade" }),
+    locationId: text("location_id")
+      .notNull()
+      .references(() => locations.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["target", "context"] })
+      .notNull()
+      .default("context"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.investigationItemId, table.locationId] }),
+    index("investigation_item_locations_location_idx").on(table.locationId),
+    check(
+      "investigation_item_locations_role_check",
+      sql`${table.role} in ('target', 'context')`,
+    ),
+  ],
+);
+
+export const investigationItemSources = sqliteTable(
+  "investigation_item_sources",
+  {
+    investigationItemId: text("investigation_item_id")
+      .notNull()
+      .references(() => investigationItems.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => sources.id, { onDelete: "cascade" }),
+    sourceRevision: integer("source_revision").notNull(),
+    role: text("role", { enum: investigationItemLinkRoles })
+      .notNull()
+      .default("context"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.investigationItemId, table.sourceId] }),
+    index("investigation_item_sources_source_idx").on(table.sourceId),
+    check(
+      "investigation_item_sources_revision_check",
+      sql`${table.sourceRevision} >= 1`,
+    ),
+    check(
+      "investigation_item_sources_role_check",
+      sql`${table.role} in ('target', 'context', 'result')`,
+    ),
+  ],
+);
+
+export const investigationItemUpdates = sqliteTable(
+  "investigation_item_updates",
+  {
+    id: text("id").primaryKey(),
+    investigationItemId: text("investigation_item_id")
+      .notNull()
+      .references(() => investigationItems.id, { onDelete: "cascade" }),
+    fromStatus: text("from_status", { enum: investigationItemStatuses }),
+    toStatus: text("to_status", { enum: investigationItemStatuses }).notNull(),
+    note: text("note").notNull().default(""),
+    sourceId: text("source_id").references(() => sources.id, {
+      onDelete: "set null",
+    }),
+    claimId: text("claim_id").references(() => claims.id, {
+      onDelete: "set null",
+    }),
+    changedBy: text("changed_by", { enum: actorKinds })
+      .notNull()
+      .default("user"),
+    changedAt: integer("changed_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+  },
+  (table) => [
+    index("investigation_item_updates_history_idx").on(
+      table.investigationItemId,
+      table.changedAt,
+    ),
+    check(
+      "investigation_item_updates_from_status_check",
+      sql`${table.fromStatus} is null or ${table.fromStatus} in ('pending', 'in_progress', 'resolved', 'unresolved')`,
+    ),
+    check(
+      "investigation_item_updates_to_status_check",
+      sql`${table.toStatus} in ('pending', 'in_progress', 'resolved', 'unresolved')`,
+    ),
+    check(
+      "investigation_item_updates_actor_check",
+      sql`${table.changedBy} in ('user', 'ai')`,
     ),
   ],
 );
@@ -1083,3 +1248,7 @@ export type ReasoningSuggestionStatus =
 export type ReasoningSuggestionResolutionKind =
   (typeof reasoningSuggestionResolutionKinds)[number];
 export type InvestigationItemStatus = (typeof investigationItemStatuses)[number];
+export type InvestigationItemPriority =
+  (typeof investigationItemPriorities)[number];
+export type InvestigationItemLinkRole =
+  (typeof investigationItemLinkRoles)[number];

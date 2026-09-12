@@ -8,7 +8,12 @@ export function CaseWorkspaceFrame({
   caseFile,
   children,
 }: {
-  activeModule: "evidence" | "people" | "reasoning" | "timeline";
+  activeModule:
+    | "evidence"
+    | "investigations"
+    | "people"
+    | "reasoning"
+    | "timeline";
   aside: React.ReactNode;
   caseFile: CaseSummary;
   children: React.ReactNode;
@@ -58,10 +63,11 @@ export function CaseWorkspaceFrame({
                 {caseFile.description || "尚未填写案件说明。"}
               </p>
             </div>
-            <div className="grid grid-cols-3 divide-x divide-[var(--line)] rounded-2xl border border-[var(--line)] bg-white/55 px-2 py-4">
+            <div className="grid grid-cols-4 divide-x divide-[var(--line)] rounded-2xl border border-[var(--line)] bg-white/55 px-2 py-4">
               <WorkspaceStat label="人物" value={caseFile.peopleCount} />
               <WorkspaceStat label="事件" value={caseFile.eventCount} />
               <WorkspaceStat label="论断" value={caseFile.claimCount} />
+              <WorkspaceStat label="待查" value={caseFile.openInvestigationCount} />
             </div>
           </div>
         </section>
@@ -93,6 +99,15 @@ export function CaseWorkspaceFrame({
             href={`/cases/${caseFile.id}/reasoning`}
           >
             推理
+          </WorkspaceLink>
+          <WorkspaceLink
+            active={activeModule === "investigations"}
+            href={`/cases/${caseFile.id}/investigations`}
+          >
+            调查
+            {caseFile.openInvestigationCount > 0 && (
+              <span className="record-badge ml-1">{caseFile.openInvestigationCount}</span>
+            )}
           </WorkspaceLink>
         </nav>
 

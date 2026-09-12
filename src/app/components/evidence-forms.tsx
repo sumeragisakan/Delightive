@@ -341,7 +341,7 @@ export function SourceEditor({
 
   if (source.archivedAt) {
     return (
-      <article className="source-summary">
+      <article className="source-summary scroll-mt-8" id={`source-${source.id}`}>
         <p className="font-semibold">{source.title}</p>
         <p className="mt-1 text-xs text-[var(--muted)]">
           已归档 · 修订 {source.revision}
@@ -356,7 +356,7 @@ export function SourceEditor({
   }
 
   return (
-    <details className="source-summary">
+    <details className="source-summary scroll-mt-8" id={`source-${source.id}`}>
       <summary className="cursor-pointer list-none marker:hidden">
         <div className="flex items-start justify-between gap-3">
           <div>

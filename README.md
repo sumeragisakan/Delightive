@@ -22,7 +22,7 @@ The SQLite database is local by default. The persistence boundary is kept on the
 
 ## Current workspace
 
-- Create case files and keep active and archived investigations separate.
+- Create case files and keep active and archived cases separate.
 - Record people with duplicate display names, reusable ambiguous aliases, and visual colors.
 - Build second-precision timelines with exact, approximate, ranged, relative, and unknown times.
 - Nest locations, assign event participants, and preserve every event aggregate revision.
@@ -33,8 +33,11 @@ The SQLite database is local by default. The persistence boundary is kept on the
 - Run cited AI consistency checks, hypothesis expansion, counterexample searches, and investigation-gap analysis against an immutable branch snapshot.
 - Review every AI suggestion before turning it into a branch hypothesis; AI output cannot directly enter the trusted layer.
 - Preserve model output while recording user edits as separate suggestion revisions.
-- Resolve AI suggestions by type: branch hypothesis, explicit contradiction, or a lightweight investigation item.
+- Resolve AI suggestions by type: branch hypothesis, explicit contradiction, or a tracked investigation item.
 - Deduplicate repeated submissions, recover interrupted runs, and retry against the latest case context with a linked audit trail.
+- Turn manual questions and AI-discovered gaps into branch-scoped investigation items with status, priority, notes, and transition history.
+- Link investigations to revisioned claims, events, and sources plus relevant people and locations, and flag tasks when their original context changes.
+- Close an investigation with a result, reuse or create a provenance source, and optionally create a draft fact or statement for separate human review.
 
 ## Local development
 
@@ -89,4 +92,5 @@ Migration files under `drizzle/` are committed. Local database files under `.dat
 3. ~~Build the fact/source review interface on top of the existing dependency model.~~
 4. ~~Add branching hypothesis workflows and contradiction review.~~
 5. ~~Introduce AI-assisted analysis with cited fact identifiers.~~
-6. Add richer investigation planning, export, and model/provider controls.
+6. ~~Add a tracked investigation planning and result-feedback workflow.~~
+7. Add case export/import, model/provider controls, and reasoning-run comparison.

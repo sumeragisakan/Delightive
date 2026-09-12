@@ -351,3 +351,90 @@ describe("AI review loop migration", () => {
     }
   });
 });
+
+describe("investigation workflow migration", () => {
+  it("preserves lightweight investigation items and initializes workflow history", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    try {
+      runMigration(sqlite, "0000_initial_schema.sql");
+      runMigration(sqlite, "0001_timeline_precision_and_event_revisions.sql");
+      runMigration(sqlite, "0002_evidence_source_revisions.sql");
+      runMigration(sqlite, "0003_reasoning_reviews_and_conflicts.sql");
+      runMigration(sqlite, "0004_ai_reasoning_runs.sql");
+      runMigration(sqlite, "0005_ai_review_loop.sql");
+      sqlite.prepare("insert into cases (id, title) values (?, ?)").run(
+        "case-1",
+        "旧调查案件",
+      );
+      sqlite
+        .prepare("insert into reasoning_branches (id, case_id, name) values (?, ?, ?)")
+        .run("branch-1", "case-1", "旧分支");
+      sqlite
+        .prepare("insert into claims (id, case_id, kind, status, content) values (?, ?, ?, ?, ?)")
+        .run("claim-1", "case-1", "fact", "accepted", "门已锁");
+      sqlite
+        .prepare(
+          `insert into investigation_items (
+            id, case_id, branch_id, title, question, notes, status, created_by
+          ) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "item-1",
+          "case-1",
+          "branch-1",
+          "检查后门",
+          "后门是否可以通行？",
+          "旧笔记",
+          "in_progress",
+          "user",
+        );
+      sqlite
+        .prepare(
+          `insert into investigation_item_claims (
+            investigation_item_id, claim_id, claim_revision, role
+          ) values (?, ?, ?, ?)`,
+        )
+        .run("item-1", "claim-1", 1, "target");
+
+      runMigration(sqlite, "0006_investigation_workflow.sql");
+
+      expect(
+        sqlite
+          .prepare(
+            `select title, notes, status, priority, result_summary, started_at
+             from investigation_items where id = ?`,
+          )
+          .get("item-1"),
+      ).toEqual({
+        notes: "旧笔记",
+        priority: "normal",
+        result_summary: "",
+        started_at: null,
+        status: "in_progress",
+        title: "检查后门",
+      });
+      expect(
+        sqlite
+          .prepare(
+            "select from_status, to_status, note from investigation_item_updates where investigation_item_id = ?",
+          )
+          .get("item-1"),
+      ).toEqual({
+        from_status: null,
+        note: "迁移现有调查事项",
+        to_status: "in_progress",
+      });
+      expect(
+        sqlite
+          .prepare("select role from investigation_item_claims where investigation_item_id = ?")
+          .pluck()
+          .get("item-1"),
+      ).toBe("target");
+      expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+});

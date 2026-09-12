@@ -255,6 +255,32 @@ textarea:focus-visible {
   background: rgba(163, 49, 42, 0.07);
 }
 
+.investigation-priority {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.22rem 0.55rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.investigation-priority-high {
+  border-color: rgba(154, 56, 46, 0.32);
+  color: var(--accent);
+}
+
+.investigation-priority-urgent {
+  border-color: var(--danger);
+  background: rgba(163, 49, 42, 0.08);
+  color: var(--danger);
+}
+
+.investigation-priority-low {
+  opacity: 0.72;
+}
+
 .primary-button:disabled,
 .secondary-button:disabled,
 .text-button:disabled,

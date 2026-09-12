@@ -14,6 +14,7 @@ import {
 } from "../schema";
 import { EvidenceRepository } from "./evidence-repository";
 import { EventRepository } from "./event-repository";
+import { InvestigationRepository } from "./investigation-repository";
 
 type CaseRow = typeof cases.$inferSelect;
 type PersonRow = typeof people.$inferSelect;
@@ -26,6 +27,7 @@ type SourceRow = typeof sources.$inferSelect;
 export type CaseSummary = CaseRow & {
   claimCount: number;
   eventCount: number;
+  openInvestigationCount: number;
   peopleCount: number;
 };
 
@@ -46,6 +48,9 @@ export class CaseRepository {
         ...caseFile,
         claimCount: this.countRows("claims", caseFile.id),
         eventCount: this.countRows("events", caseFile.id),
+        openInvestigationCount: new InvestigationRepository(
+          this.connection,
+        ).countOpenItems(caseFile.id),
         peopleCount: this.countRows("people", caseFile.id),
       }));
   }
@@ -69,6 +74,9 @@ export class CaseRepository {
       ...caseFile,
       claimCount: this.countRows("claims", caseId),
       eventCount: this.countRows("events", caseId),
+      openInvestigationCount: new InvestigationRepository(
+        this.connection,
+      ).countOpenItems(caseId),
       peopleCount: this.countRows("people", caseId),
     };
   }

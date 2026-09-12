@@ -237,7 +237,7 @@ function TimelineCard({
   people: Array<{ color: string | null; displayName: string; id: string }>;
 }) {
   return (
-    <article className="timeline-event">
+    <article className="timeline-event scroll-mt-8" id={`event-${event.id}`}>
       <span className="timeline-node" aria-hidden="true" />
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">

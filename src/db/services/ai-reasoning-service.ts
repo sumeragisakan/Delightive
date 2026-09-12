@@ -14,6 +14,7 @@ import {
   type AiSuggestion,
   type EditableSuggestion,
 } from "../repositories/ai-reasoning-repository";
+import { InvestigationRepository } from "../repositories/investigation-repository";
 import { ReasoningWorkspaceRepository } from "../repositories/reasoning-workspace-repository";
 import type {
   ReasoningRunErrorCode,
@@ -34,6 +35,7 @@ export type AiReasoningRunView = Omit<AiReasoningRun, "suggestions"> & {
 
 export class AiReasoningService {
   private readonly repository: AiReasoningRepository;
+  private readonly investigations: InvestigationRepository;
   private readonly workspace: ReasoningWorkspaceRepository;
 
   constructor(
@@ -41,6 +43,7 @@ export class AiReasoningService {
     private readonly provider?: ReasoningModelProvider,
   ) {
     this.repository = new AiReasoningRepository(connection);
+    this.investigations = new InvestigationRepository(connection);
     this.workspace = new ReasoningWorkspaceRepository(connection);
   }
 
@@ -223,7 +226,7 @@ export class AiReasoningService {
         return { id: link.id, kind: "conflict" as const };
       }
       if (record.suggestion.kind === "investigation_gap") {
-        const item = this.repository.createInvestigationItem({
+        const item = this.investigations.createFromSuggestion({
           branchId: record.run.branchId,
           caseId,
           citations: effective.citations,
@@ -289,7 +292,7 @@ export class AiReasoningService {
 
   listInvestigationItems(caseId: string, branchId: string) {
     this.getExactContext(caseId, branchId);
-    return this.repository.listInvestigationItems(caseId, branchId);
+    return this.investigations.listItems(caseId, branchId);
   }
 
   recoverInterruptedRuns(caseId: string, now = new Date()) {
