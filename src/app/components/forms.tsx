@@ -148,6 +148,25 @@ export function CaseSettingsForm({
       </form>
 
       <div className="border-t border-[var(--line)] pt-5">
+        <p className="mb-3 text-sm font-semibold">数据移交与备份</p>
+        <div className="grid gap-2">
+          <a
+            className="secondary-button justify-center"
+            download
+            href={`/api/cases/${caseFile.id}/export`}
+          >
+            导出此案件包
+          </a>
+          <a className="text-button justify-center" download href="/api/backup">
+            下载完整 SQLite 备份
+          </a>
+        </div>
+        <p className="mt-2 text-center text-xs leading-5 text-[var(--muted)]">
+          案件包适合移交且会省略本机绝对路径；SQLite 备份包含全部案件。
+        </p>
+      </div>
+
+      <div className="border-t border-[var(--line)] pt-5">
         <form action={statusAction}>
           <button
             className="text-button w-full justify-center"

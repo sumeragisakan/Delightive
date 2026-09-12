@@ -38,6 +38,8 @@ The SQLite database is local by default. The persistence boundary is kept on the
 - Turn manual questions and AI-discovered gaps into branch-scoped investigation items with status, priority, notes, and transition history.
 - Link investigations to revisioned claims, events, and sources plus relevant people and locations, and flag tasks when their original context changes.
 - Close an investigation with a result, reuse or create a provenance source, and optionally create a draft fact or statement for separate human review.
+- Export a complete case as a versioned `.delightive.json` package, preview and import it as an independent copy, and preserve its revision and AI audit trails with fresh internal IDs while omitting machine-specific absolute paths.
+- Download a transactionally consistent SQLite backup containing every local case. Environment files and API keys are never included in either export format.
 
 ## Local development
 
@@ -93,4 +95,5 @@ Migration files under `drizzle/` are committed. Local database files under `.dat
 4. ~~Add branching hypothesis workflows and contradiction review.~~
 5. ~~Introduce AI-assisted analysis with cited fact identifiers.~~
 6. ~~Add a tracked investigation planning and result-feedback workflow.~~
-7. Add case export/import, model/provider controls, and reasoning-run comparison.
+7. ~~Add versioned case export/import and whole-database backup.~~
+8. Add model/provider controls and reasoning-run comparison.

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { setCaseStatusAction } from "./actions";
+import { CaseImportForm } from "./components/case-import-form";
 import { CaseCreateForm } from "./components/forms";
 import { CaseWebMcpTools } from "./components/webmcp-tools";
 import { getCaseDashboard } from "./data";
@@ -139,6 +140,16 @@ export default async function Home() {
                 先决定案件如何记录时间。人物与证据可以在进入工作台后逐步补充。
               </p>
               <CaseCreateForm />
+
+              <details className="mt-8 border-t border-[var(--line)] pt-6">
+                <summary className="cursor-pointer list-none text-sm font-semibold text-[var(--accent)] marker:hidden">
+                  从案件包导入
+                </summary>
+                <p className="mb-5 mt-3 text-xs leading-5 text-[var(--muted)]">
+                  导入会建立一份独立副本，不会覆盖当前已有案件。
+                </p>
+                <CaseImportForm />
+              </details>
             </div>
           </aside>
         </div>
