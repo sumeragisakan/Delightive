@@ -25,6 +25,7 @@ const migrations = [
   "0005_ai_review_loop.sql",
   "0006_investigation_workflow.sql",
   "0007_ai_runtime_settings.sql",
+  "0008_global_search.sql",
 ];
 
 describe("case bundle portability", () => {
@@ -32,6 +33,7 @@ describe("case bundle portability", () => {
     const connection = createFixture();
     try {
       const exported = exportCaseBundle(connection, "case-1");
+      expect(Object.hasOwn(exported.tables, "search_documents")).toBe(false);
       expect(CASE_BUNDLE_TABLES.every((table) => exported.tables[table].length > 0)).toBe(true);
       expect(previewCaseBundle(connection, exported)).toMatchObject({
         counts: {

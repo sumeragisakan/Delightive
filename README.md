@@ -42,6 +42,7 @@ The SQLite database is local by default. The persistence boundary is kept on the
 - Download a transactionally consistent SQLite backup containing every local case. Environment files and API keys are never included in either export format.
 - Configure the model, request timeout, output-token limit, and AI availability from the workspace while keeping credentials server-only.
 - Run a privacy-safe connection diagnostic and compare any two historical runs across their immutable inputs, outputs, and human review state without another API call.
+- Search across cases, people and aliases, locations, events, sources, facts, reasoning branches, investigations, and AI results with case, branch, layer, status, author, type, and archive filters.
 
 ## Local development
 
@@ -88,9 +89,10 @@ Database schema workflow:
 pnpm db:generate
 pnpm db:check
 pnpm db:migrate
+pnpm db:reindex
 ```
 
-Migration files under `drizzle/` are committed. Local database files under `.data/` are not.
+Migration files under `drizzle/` are committed. Local database files under `.data/` are not. The search index is derived from case records: normal edits and imports refresh it automatically, while `pnpm db:reindex` rebuilds every case after manual database maintenance.
 
 ## Roadmap
 
@@ -102,4 +104,5 @@ Migration files under `drizzle/` are committed. Local database files under `.dat
 6. ~~Add a tracked investigation planning and result-feedback workflow.~~
 7. ~~Add versioned case export/import and whole-database backup.~~
 8. ~~Add model controls, connection diagnostics, and reasoning-run comparison.~~
-9. Add cross-case search and a printable reasoning report.
+9. ~~Add cross-case search and structured filtering.~~
+10. Add evidence/reasoning visualization and a printable reasoning report.

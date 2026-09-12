@@ -40,9 +40,17 @@ export default async function Home() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-white/15 px-3 py-2 text-xs text-white/70">
-            <span className="h-2 w-2 rounded-full bg-[#d9b45b] shadow-[0_0_0_4px_rgba(217,180,91,0.12)]" />
-            数据仅保存在本机
+          <div className="flex items-center gap-3">
+            <Link
+              className="rounded-full border border-white/20 px-4 py-2 text-xs font-semibold text-white transition hover:border-white/45 hover:bg-white/10"
+              href="/search"
+            >
+              全局搜索
+            </Link>
+            <div className="hidden items-center gap-2 rounded-full border border-white/15 px-3 py-2 text-xs text-white/70 sm:flex">
+              <span className="h-2 w-2 rounded-full bg-[#d9b45b] shadow-[0_0_0_4px_rgba(217,180,91,0.12)]" />
+              数据仅保存在本机
+            </div>
           </div>
         </header>
 

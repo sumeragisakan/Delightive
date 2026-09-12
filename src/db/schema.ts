@@ -146,6 +146,19 @@ export const investigationItemLinkRoles = [
   "result",
 ] as const;
 export const aiProviderKinds = ["openai"] as const;
+export const searchEntityTypes = [
+  "case",
+  "person",
+  "location",
+  "event",
+  "source",
+  "branch",
+  "claim",
+  "investigation",
+  "ai_run",
+  "ai_suggestion",
+] as const;
+export const searchLayers = ["fixed", "trusted", "draft"] as const;
 
 const nowInMilliseconds = sql`(unixepoch() * 1000)`;
 
@@ -215,6 +228,62 @@ export const cases = sqliteTable(
     check(
       "cases_timeline_mode_check",
       sql`${table.timelineMode} in ('relative', 'calendar', 'ordinal')`,
+    ),
+  ],
+);
+
+export const searchDocuments = sqliteTable(
+  "search_documents",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    entityType: text("entity_type", { enum: searchEntityTypes }).notNull(),
+    entityId: text("entity_id").notNull(),
+    parentId: text("parent_id"),
+    caseId: text("case_id")
+      .notNull()
+      .references(() => cases.id, { onDelete: "cascade" }),
+    branchId: text("branch_id"),
+    title: text("title").notNull(),
+    body: text("body").notNull().default(""),
+    keywords: text("keywords").notNull().default(""),
+    layer: text("layer", { enum: searchLayers }),
+    status: text("status").notNull().default(""),
+    createdBy: text("created_by", { enum: actorKinds }),
+    archived: integer("archived", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(nowInMilliseconds),
+  },
+  (table) => [
+    uniqueIndex("search_documents_entity_unique").on(
+      table.entityType,
+      table.entityId,
+    ),
+    index("search_documents_case_filter_idx").on(
+      table.caseId,
+      table.archived,
+      table.entityType,
+    ),
+    index("search_documents_branch_filter_idx").on(table.branchId),
+    index("search_documents_layer_status_idx").on(table.layer, table.status),
+    index("search_documents_updated_idx").on(table.updatedAt),
+    check(
+      "search_documents_entity_type_check",
+      sql`${table.entityType} in ('case', 'person', 'location', 'event', 'source', 'branch', 'claim', 'investigation', 'ai_run', 'ai_suggestion')`,
+    ),
+    check(
+      "search_documents_layer_check",
+      sql`${table.layer} is null or ${table.layer} in ('fixed', 'trusted', 'draft')`,
+    ),
+    check(
+      "search_documents_actor_check",
+      sql`${table.createdBy} is null or ${table.createdBy} in ('user', 'ai')`,
+    ),
+    check(
+      "search_documents_archived_check",
+      sql`${table.archived} in (0, 1)`,
     ),
   ],
 );
@@ -1293,3 +1362,5 @@ export type InvestigationItemPriority =
 export type InvestigationItemLinkRole =
   (typeof investigationItemLinkRoles)[number];
 export type AiProviderKind = (typeof aiProviderKinds)[number];
+export type SearchEntityType = (typeof searchEntityTypes)[number];
+export type SearchLayer = (typeof searchLayers)[number];

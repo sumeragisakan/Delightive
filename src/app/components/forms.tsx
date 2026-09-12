@@ -277,7 +277,7 @@ export function PersonCard({
   useResetOnSuccess(aliasFormRef, aliasState);
 
   return (
-    <article className="person-card">
+    <article className="person-card scroll-mt-8" id={`person-${person.id}`}>
       <div className="flex items-start gap-4">
         <span
           aria-hidden="true"

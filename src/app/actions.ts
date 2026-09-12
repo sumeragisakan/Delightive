@@ -15,6 +15,7 @@ import { InvestigationRepository } from "@/db/repositories/investigation-reposit
 import { ReasoningWorkspaceRepository } from "@/db/repositories/reasoning-workspace-repository";
 import { AiReasoningService } from "@/db/services/ai-reasoning-service";
 import { AiSettingsService } from "@/db/services/ai-settings-service";
+import { SearchService } from "@/db/services/search-service";
 import type {
   ClaimEntityRole,
   SourceRelationKind,
@@ -29,6 +30,7 @@ const reasoningWorkspaceRepository = new ReasoningWorkspaceRepository(
   databaseConnection,
 );
 const aiSettingsService = new AiSettingsService(databaseConnection);
+const searchService = new SearchService(databaseConnection);
 
 const caseSchema = z.object({
   description: z.string().trim().max(2_000, "案件说明不能超过 2000 个字符。"),
@@ -489,7 +491,7 @@ export async function createCaseAction(
     return persistenceFailure(error, "无法创建案件，请稍后重试。");
   }
 
-  revalidatePath("/");
+  refreshSearchIndex(caseId);
   redirect(`/cases/${caseId}`);
 }
 
@@ -505,7 +507,7 @@ export async function createCaseFromToolAction(input: unknown): Promise<
 
   try {
     const created = caseRepository.createCase(parsed.data);
-    revalidatePath("/");
+    refreshSearchIndex(created.id);
     return {
       id: created.id,
       ok: true,
@@ -1377,6 +1379,7 @@ export async function runAiReasoningAction(
       };
     }
   } catch (error) {
+    revalidateCase(caseId);
     return reasoningFailure(error, "AI 推演失败，请稍后重试。");
   }
   revalidateCase(caseId);
@@ -1508,6 +1511,7 @@ export async function retryAiReasoningAction(
       status: "success",
     };
   } catch (error) {
+    revalidateCase(caseId);
     return reasoningFailure(error, "重新推演失败，请稍后重试。");
   }
 }
@@ -1901,13 +1905,23 @@ function linkFailure(error: unknown, label: string): ActionState {
 }
 
 function revalidateCase(caseId: string) {
-  revalidatePath("/");
+  refreshSearchIndex(caseId);
   revalidatePath(`/cases/${caseId}`);
   revalidatePath(`/cases/${caseId}/timeline`);
   revalidatePath(`/cases/${caseId}/evidence`);
   revalidatePath(`/cases/${caseId}/reasoning`);
   revalidatePath(`/cases/${caseId}/reasoning/ai`);
   revalidatePath(`/cases/${caseId}/investigations`);
+}
+
+function refreshSearchIndex(caseId: string) {
+  try {
+    searchService.rebuildCase(caseId);
+  } catch (error) {
+    console.error("Search index refresh failed:", error);
+  }
+  revalidatePath("/");
+  revalidatePath("/search");
 }
 
 function parseDuration(value: string) {

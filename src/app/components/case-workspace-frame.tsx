@@ -109,6 +109,9 @@ export function CaseWorkspaceFrame({
               <span className="record-badge ml-1">{caseFile.openInvestigationCount}</span>
             )}
           </WorkspaceLink>
+          <WorkspaceLink active={false} href={`/search?case=${caseFile.id}`}>
+            搜索
+          </WorkspaceLink>
         </nav>
 
         <div className="grid lg:grid-cols-[minmax(0,1fr)_23rem]">

@@ -126,7 +126,10 @@ export function LocationEditor({
   );
 
   return (
-    <details className="location-editor">
+    <details
+      className="location-editor scroll-mt-8"
+      id={`location-${location.id}`}
+    >
       <summary className="cursor-pointer list-none marker:hidden">
         <span className="font-semibold">{location.name}</span>
         <span className="ml-2 text-xs text-[var(--muted)]">

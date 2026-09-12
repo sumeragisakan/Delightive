@@ -13,6 +13,10 @@ import { AiReasoningService } from "@/db/services/ai-reasoning-service";
 import { AiRunComparisonService } from "@/db/services/ai-run-comparison-service";
 import { AiSettingsService } from "@/db/services/ai-settings-service";
 import { buildReasoningContext } from "@/db/services/reasoning-context-service";
+import {
+  parseSearchFilters,
+  SearchService,
+} from "@/db/services/search-service";
 
 const caseRepository = new CaseRepository(databaseConnection);
 const evidenceRepository = new EvidenceRepository(databaseConnection);
@@ -23,10 +27,24 @@ const reasoningWorkspaceRepository = new ReasoningWorkspaceRepository(
   databaseConnection,
 );
 const aiSettingsService = new AiSettingsService(databaseConnection);
+const searchService = new SearchService(databaseConnection);
 
 export async function getCaseDashboard() {
   await connection();
   return caseRepository.listCases();
+}
+
+export async function getSearchWorkspace(
+  parameters: Record<string, string | string[] | undefined>,
+) {
+  await connection();
+  const filters = parseSearchFilters(parameters);
+  const results = searchService.search(filters);
+  return {
+    branches: searchService.listBranches(filters.caseId),
+    cases: caseRepository.listCases(),
+    results,
+  };
 }
 
 export async function getCaseWorkspace(caseId: string) {

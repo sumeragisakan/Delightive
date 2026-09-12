@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 
 import { databaseConnection } from "@/db/client";
+import { SearchService } from "@/db/services/search-service";
 import {
   CaseBundleError,
   importCaseBundle,
@@ -34,7 +35,13 @@ export async function POST(request: Request) {
 
     const title = new URL(request.url).searchParams.get("title") ?? undefined;
     const result = importCaseBundle(databaseConnection, bundle, title);
+    try {
+      new SearchService(databaseConnection).rebuildCase(result.caseId);
+    } catch (error) {
+      console.error("Imported case search indexing failed:", error);
+    }
     revalidatePath("/");
+    revalidatePath("/search");
     revalidatePath(result.url);
     return Response.json({ ok: true, ...result }, { status: 201 });
   } catch (error) {

@@ -511,3 +511,46 @@ describe("AI runtime settings migration", () => {
     }
   });
 });
+
+describe("global search migration", () => {
+  it("keeps the external-content FTS index synchronized on insert, update, delete, and case cascade", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    try {
+      for (const migration of [
+        "0000_initial_schema.sql",
+        "0001_timeline_precision_and_event_revisions.sql",
+        "0002_evidence_source_revisions.sql",
+        "0003_reasoning_reviews_and_conflicts.sql",
+        "0004_ai_reasoning_runs.sql",
+        "0005_ai_review_loop.sql",
+        "0006_investigation_workflow.sql",
+        "0007_ai_runtime_settings.sql",
+        "0008_global_search.sql",
+      ]) {
+        runMigration(sqlite, migration);
+      }
+      sqlite.prepare("insert into cases (id, title) values (?, ?)").run("case-1", "索引测试");
+      sqlite
+        .prepare(
+          `insert into search_documents (
+            entity_type, entity_id, case_id, title, body, keywords, status
+          ) values (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("person", "person-1", "case-1", "黑伞客", "携带旧怀表", "X", "active");
+
+      expect(sqlite.prepare("select count(*) from search_documents_fts where search_documents_fts match ?").pluck().get("黑伞客")).toBe(1);
+      sqlite.prepare("update search_documents set title = ? where entity_id = ?").run("银伞客", "person-1");
+      expect(sqlite.prepare("select count(*) from search_documents_fts where search_documents_fts match ?").pluck().get("黑伞客")).toBe(0);
+      expect(sqlite.prepare("select count(*) from search_documents_fts where search_documents_fts match ?").pluck().get("银伞客")).toBe(1);
+
+      sqlite.prepare("delete from cases where id = ?").run("case-1");
+      expect(sqlite.prepare("select count(*) from search_documents").pluck().get()).toBe(0);
+      expect(sqlite.prepare("select count(*) from search_documents_fts where search_documents_fts match ?").pluck().get("银伞客")).toBe(0);
+      expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+});
