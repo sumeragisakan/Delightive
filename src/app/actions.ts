@@ -5,12 +5,14 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import type { ActionState } from "./action-state";
+import { createConfiguredAiProvider } from "@/ai/config";
 import { databaseConnection } from "@/db/client";
 import { CaseRepository } from "@/db/repositories/case-repository";
 import { EvidenceRepository } from "@/db/repositories/evidence-repository";
 import { EventRepository } from "@/db/repositories/event-repository";
 import { LocationRepository } from "@/db/repositories/location-repository";
 import { ReasoningWorkspaceRepository } from "@/db/repositories/reasoning-workspace-repository";
+import { AiReasoningService } from "@/db/services/ai-reasoning-service";
 import type {
   ClaimEntityRole,
   SourceRelationKind,
@@ -330,6 +332,23 @@ const conflictReviewSchema = reviewSchema.extend({
     ],
     { error: "请选择有效的冲突处置。" },
   ),
+});
+
+const aiRunSchema = z.object({
+  focusClaimId: optionalIdSchema,
+  mode: z.enum(
+    [
+      "consistency_check",
+      "hypothesis_expansion",
+      "counterexample_search",
+      "investigation_gaps",
+    ],
+    { error: "请选择有效的推演任务。" },
+  ),
+  userPrompt: z
+    .string()
+    .trim()
+    .max(4_000, "补充要求不能超过 4000 个字符。"),
 });
 
 export async function createCaseAction(
@@ -1208,6 +1227,77 @@ export async function reviewReasoningConflictAction(
   return { message: "冲突处置已记录。", status: "success" };
 }
 
+export async function runAiReasoningAction(
+  caseId: string,
+  branchId: string,
+  _previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = aiRunSchema.safeParse({
+    focusClaimId: readText(formData, "focusClaimId"),
+    mode: readText(formData, "mode"),
+    userPrompt: readText(formData, "userPrompt"),
+  });
+  if (!parsed.success) {
+    return validationFailure(parsed.error, "请检查推演设置。");
+  }
+
+  try {
+    const service = new AiReasoningService(
+      databaseConnection,
+      createConfiguredAiProvider(),
+    );
+    await service.startRun({ branchId, caseId, ...parsed.data });
+  } catch (error) {
+    return reasoningFailure(error, "AI 推演失败，请稍后重试。");
+  }
+  revalidateCase(caseId);
+  return { message: "推演已完成，建议已进入待审列表。", status: "success" };
+}
+
+export async function acceptAiSuggestionAction(
+  caseId: string,
+  suggestionId: string,
+  _previousState: ActionState,
+  _formData: FormData,
+): Promise<ActionState> {
+  void _previousState;
+  void _formData;
+  try {
+    new AiReasoningService(databaseConnection).acceptSuggestion(
+      caseId,
+      suggestionId,
+    );
+  } catch (error) {
+    return reasoningFailure(error, "无法采纳这条 AI 建议。");
+  }
+  revalidateCase(caseId);
+  return {
+    message: "建议已转为 AI 创建的分支假设；进入可信层仍需人工审查。",
+    status: "success",
+  };
+}
+
+export async function dismissAiSuggestionAction(
+  caseId: string,
+  suggestionId: string,
+  _previousState: ActionState,
+  _formData: FormData,
+): Promise<ActionState> {
+  void _previousState;
+  void _formData;
+  try {
+    new AiReasoningService(databaseConnection).dismissSuggestion(
+      caseId,
+      suggestionId,
+    );
+  } catch (error) {
+    return reasoningFailure(error, "无法忽略这条 AI 建议。");
+  }
+  revalidateCase(caseId);
+  return { message: "建议已保留在历史中并标记为忽略。", status: "success" };
+}
+
 function readCaseForm(formData: FormData) {
   return {
     description: readText(formData, "description"),
@@ -1344,6 +1434,7 @@ function revalidateCase(caseId: string) {
   revalidatePath(`/cases/${caseId}/timeline`);
   revalidatePath(`/cases/${caseId}/evidence`);
   revalidatePath(`/cases/${caseId}/reasoning`);
+  revalidatePath(`/cases/${caseId}/reasoning/ai`);
 }
 
 function parseDuration(value: string) {

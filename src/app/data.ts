@@ -2,12 +2,15 @@ import "server-only";
 
 import { connection } from "next/server";
 
+import { getAiConfigurationStatus } from "@/ai/config";
 import { databaseConnection } from "@/db/client";
 import { CaseRepository } from "@/db/repositories/case-repository";
 import { EvidenceRepository } from "@/db/repositories/evidence-repository";
 import { EventRepository } from "@/db/repositories/event-repository";
 import { LocationRepository } from "@/db/repositories/location-repository";
 import { ReasoningWorkspaceRepository } from "@/db/repositories/reasoning-workspace-repository";
+import { AiReasoningService } from "@/db/services/ai-reasoning-service";
+import { buildReasoningContext } from "@/db/services/reasoning-context-service";
 
 const caseRepository = new CaseRepository(databaseConnection);
 const evidenceRepository = new EvidenceRepository(databaseConnection);
@@ -69,5 +72,35 @@ export async function getReasoningWorkspace(
   return {
     caseFile,
     workspace: reasoningWorkspaceRepository.getWorkspace(caseId, branchId),
+  };
+}
+
+export async function getAiReasoningWorkspace(
+  caseId: string,
+  branchId?: string | null,
+) {
+  await connection();
+  const caseFile = caseRepository.getCaseSummary(caseId);
+  if (!caseFile) {
+    return {
+      caseFile,
+      configuration: getAiConfigurationStatus(),
+      context: null,
+      runs: [],
+      workspace: null,
+    };
+  }
+  const workspace = reasoningWorkspaceRepository.getWorkspace(caseId, branchId);
+  const selectedBranchId = workspace.selectedBranch?.id;
+  return {
+    caseFile,
+    configuration: getAiConfigurationStatus(),
+    context: selectedBranchId
+      ? buildReasoningContext(databaseConnection, caseId, selectedBranchId)
+      : null,
+    runs: selectedBranchId
+      ? new AiReasoningService(databaseConnection).listRuns(caseId, selectedBranchId)
+      : [],
+    workspace,
   };
 }

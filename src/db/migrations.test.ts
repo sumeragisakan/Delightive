@@ -229,3 +229,41 @@ describe("reasoning review migration", () => {
     }
   });
 });
+
+describe("AI reasoning run migration", () => {
+  it("adds auditable run, snapshot, and suggestion tables without changing existing claims", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    try {
+      runMigration(sqlite, "0000_initial_schema.sql");
+      runMigration(sqlite, "0001_timeline_precision_and_event_revisions.sql");
+      runMigration(sqlite, "0002_evidence_source_revisions.sql");
+      runMigration(sqlite, "0003_reasoning_reviews_and_conflicts.sql");
+      sqlite.prepare("insert into cases (id, title) values (?, ?)").run(
+        "case-1",
+        "迁移前案件",
+      );
+      sqlite
+        .prepare("insert into claims (id, case_id, kind, status, content) values (?, ?, ?, ?, ?)")
+        .run("claim-1", "case-1", "fact", "accepted", "原有事实");
+
+      runMigration(sqlite, "0004_ai_reasoning_runs.sql");
+
+      expect(sqlite.prepare("select content from claims where id = ?").pluck().get("claim-1")).toBe("原有事实");
+      expect(
+        sqlite
+          .prepare("select name from sqlite_master where type = 'table' and name like 'reasoning_%' order by name")
+          .pluck()
+          .all(),
+      ).toEqual(expect.arrayContaining([
+        "reasoning_run_inputs",
+        "reasoning_runs",
+        "reasoning_suggestions",
+      ]));
+      expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+});
