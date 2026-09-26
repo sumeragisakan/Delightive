@@ -62,6 +62,12 @@ export function CaseCreateForm() {
         </select>
       </FormField>
 
+      <FormField label="第 1 天名称（可选）" name="timelineOriginLabel" state={state}>
+        <input className={inputClassName} id="timelineOriginLabel" name="timelineOriginLabel" maxLength={120} placeholder="例如：案发当天" />
+      </FormField>
+      <FormField label="第 1 天对应日期（可选）" name="timelineOriginDate" state={state}>
+        <input className={inputClassName} id="timelineOriginDate" name="timelineOriginDate" type="date" />
+      </FormField>
       <ActionMessage state={state} />
       <button className="primary-button w-full" disabled={pending} type="submit">
         {pending ? "正在建立案件…" : "建立案件档案"}
@@ -78,6 +84,8 @@ export function CaseSettingsForm({
     id: string;
     status: "active" | "archived";
     timelineMode: "relative" | "calendar" | "ordinal";
+    timelineOriginAt: Date | null;
+    timelineOriginLabel: string | null;
     title: string;
   };
 }) {
@@ -140,6 +148,12 @@ export function CaseSettingsForm({
             <option value="calendar">日历时间</option>
             <option value="ordinal">章节 / 顺序</option>
           </select>
+        </FormField>
+        <FormField htmlFor="case-origin-label" label="第 1 天名称" name="timelineOriginLabel" state={state}>
+          <input className={inputClassName} id="case-origin-label" name="timelineOriginLabel" maxLength={120} defaultValue={caseFile.timelineOriginLabel ?? ""} placeholder="例如：案发当天" />
+        </FormField>
+        <FormField htmlFor="case-origin-date" label="第 1 天对应日期（可选）" name="timelineOriginDate" state={state}>
+          <input className={inputClassName} id="case-origin-date" name="timelineOriginDate" type="date" defaultValue={caseFile.timelineOriginAt?.toISOString().slice(0, 10) ?? ""} />
         </FormField>
         <ActionMessage state={state} />
         <button className="secondary-button w-full" disabled={pending} type="submit">
@@ -481,7 +495,7 @@ function FormField({
   );
 }
 
-function ActionMessage({ state }: { state: ActionState }) {
+export function ActionMessage({ state }: { state: ActionState }) {
   if (!state.message) {
     return null;
   }

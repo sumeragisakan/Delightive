@@ -26,9 +26,28 @@ const migrations = [
   "0006_investigation_workflow.sql",
   "0007_ai_runtime_settings.sql",
   "0008_global_search.sql",
+  "0009_timeline_basis.sql",
 ];
 
 describe("case bundle portability", () => {
+  it("imports legacy packages without time-basis columns and rejects explicit invalid new fields", () => {
+    const connection = createFixture();
+    try {
+      const bundle = exportCaseBundle(connection, "case-1");
+      for (const row of bundle.tables.events) {
+        delete row.time_precision;
+        delete row.time_basis_revision;
+      }
+      for (const row of [...bundle.tables.claim_events, ...bundle.tables.investigation_item_events]) delete row.event_time_basis_revision;
+      const imported = importCaseBundle(connection, bundle);
+      const rows = connection.sqlite.prepare("select time_precision, time_basis_revision from events where case_id = ?").all(imported.caseId);
+      expect(rows).toHaveLength(2);
+      expect(rows.every((row) => (row as { time_basis_revision: number }).time_basis_revision === 1)).toBe(true);
+      const invalid = exportCaseBundle(connection, "case-1");
+      invalid.tables.events[0].time_basis_revision = null;
+      expect(() => validateCaseBundle(connection, invalid)).toThrow();
+    } finally { connection.sqlite.close(); }
+  });
   it("round-trips the complete case graph with fresh IDs and valid audit snapshots", () => {
     const connection = createFixture();
     try {

@@ -1,3 +1,4 @@
+import { resolveEventTime } from "../../timeline/time";
 import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
@@ -421,6 +422,7 @@ export class InvestigationRepository {
         isStale: claim.revision !== link.claimRevision || claim.archivedAt !== null,
         role: link.role,
       }));
+    const eventById = new Map(this.connection.db.select().from(events).where(eq(events.caseId, item.caseId)).all().map((event) => [event.id, event]));
     const itemEvents = this.connection.db
       .select({ event: events, link: investigationItemEvents })
       .from(investigationItemEvents)
@@ -430,7 +432,7 @@ export class InvestigationRepository {
       .map(({ event, link }) => ({
         event,
         eventRevision: link.eventRevision,
-        isStale: event.revision !== link.eventRevision || event.archivedAt !== null,
+        isStale: event.revision !== link.eventRevision || link.eventTimeBasisRevision !== event.timeBasisRevision || event.archivedAt !== null || resolveEventTime(event, eventById).status === "invalid",
         role: link.role,
       }));
     const itemSources = this.connection.db
@@ -447,7 +449,11 @@ export class InvestigationRepository {
       }));
     const staleReasons = [
       ...itemClaims.filter(({ isStale }) => isStale).map(({ claim }) => `命题“${claim.content}”已有新修订`),
-      ...itemEvents.filter(({ isStale }) => isStale).map(({ event }) => `事件“${event.title}”已有新修订`),
+      ...itemEvents.filter(({ isStale }) => isStale).map(({ event }) => `事件“${event.title}”或其时间依据已变化或不可用`),
+      ...itemEvents.flatMap(({ event }) => {
+        const time = resolveEventTime(event, eventById);
+        return time.status === "invalid" && time.reason ? [time.reason] : [];
+      }),
       ...itemSources.filter(({ isStale }) => isStale).map(({ source }) => `来源“${source.title}”已有新修订`),
     ];
     const originSuggestion = item.originSuggestionId
@@ -516,7 +522,8 @@ export class InvestigationRepository {
     });
     const eventLinks = unique(input.eventIds ?? []).map((eventId) => {
       const event = this.getActiveEvent(caseId, eventId);
-      return { eventId, eventRevision: event.revision, role: "context" as const };
+      return { eventId, eventRevision: event.revision,
+          eventTimeBasisRevision: event.timeBasisRevision, role: "context" as const };
     });
     const personLinks = unique(input.personIds ?? []).map((personId) => {
       this.getPerson(caseId, personId);

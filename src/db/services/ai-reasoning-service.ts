@@ -22,6 +22,7 @@ import type {
 } from "../schema";
 import {
   buildReasoningContext,
+  temporalContextIsCurrent,
   type ReasoningContext,
 } from "./reasoning-context-service";
 
@@ -153,7 +154,7 @@ export class AiReasoningService {
       isStale: run.input.contextFingerprint !== currentFingerprint,
       suggestions: run.suggestions.map((suggestion) => ({
         ...suggestion,
-        isStale: !citationsAreCurrent(
+        isStale: !temporalContextIsCurrent(run.input.contextJson, context) || !citationsAreCurrent(
           suggestion.effective.citations,
           references,
         ),
@@ -174,6 +175,9 @@ export class AiReasoningService {
       throw new Error("编辑只能调整模型原先引用的内容和关系。");
     }
     const context = this.getExactContext(caseId, record.run.branchId);
+    if (!temporalContextIsCurrent(record.input.contextJson, context)) {
+      throw new Error("时间轴或时间依据已变化，请重新运行 AI 推演后再编辑建议。");
+    }
     const issues = validateSuggestion(
       record.suggestion.kind,
       input,
@@ -198,6 +202,9 @@ export class AiReasoningService {
     }
     const effective = record.suggestion.effective;
     const context = this.getExactContext(caseId, record.run.branchId);
+    if (!temporalContextIsCurrent(record.input.contextJson, context)) {
+      throw new Error("时间轴或时间依据已变化，请重新运行 AI 推演后再采纳建议。");
+    }
     const issues = validateSuggestion(
       record.suggestion.kind,
       effective,

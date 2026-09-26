@@ -385,6 +385,8 @@ export const events = sqliteTable(
     timeKind: text("time_kind", { enum: eventTimeKinds })
       .notNull()
       .default("unknown"),
+    timePrecision: text("time_precision", { enum: ["minute", "second"] }).notNull().default("second"),
+    timeBasisRevision: integer("time_basis_revision").notNull().default(1),
     startOffsetSeconds: integer("start_offset_seconds"),
     endOffsetSeconds: integer("end_offset_seconds"),
     relativeOffsetSeconds: integer("relative_offset_seconds"),
@@ -422,6 +424,8 @@ export const events = sqliteTable(
       sql`${table.certainty} is null or (${table.certainty} >= 0 and ${table.certainty} <= 100)`,
     ),
     check("events_revision_check", sql`${table.revision} >= 1`),
+    check("events_time_basis_check", sql`${table.timeBasisRevision} >= 1`),
+    check("events_time_precision_check", sql`${table.timePrecision} in ('minute', 'second')`),
   ],
 );
 
@@ -882,12 +886,14 @@ export const claimEvents = sqliteTable(
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }),
     eventRevision: integer("event_revision").notNull().default(1),
+    eventTimeBasisRevision: integer("event_time_basis_revision").notNull().default(1),
     role: text("role", { enum: claimEntityRoles }).notNull().default("context"),
   },
   (table) => [
     primaryKey({ columns: [table.claimId, table.eventId, table.role] }),
     index("claim_events_event_idx").on(table.eventId),
     check("claim_events_revision_check", sql`${table.eventRevision} >= 1`),
+    check("claim_events_time_basis_check", sql`${table.eventTimeBasisRevision} >= 1`),
   ],
 );
 
@@ -1227,6 +1233,7 @@ export const investigationItemEvents = sqliteTable(
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }),
     eventRevision: integer("event_revision").notNull(),
+    eventTimeBasisRevision: integer("event_time_basis_revision").notNull().default(1),
     role: text("role", { enum: ["target", "context"] })
       .notNull()
       .default("context"),
@@ -1234,6 +1241,7 @@ export const investigationItemEvents = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.investigationItemId, table.eventId] }),
     index("investigation_item_events_event_idx").on(table.eventId),
+    check("investigation_events_time_basis_check", sql`${table.eventTimeBasisRevision} >= 1`),
     check(
       "investigation_item_events_revision_check",
       sql`${table.eventRevision} >= 1`,

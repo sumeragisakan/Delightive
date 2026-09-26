@@ -4,6 +4,7 @@ import {
   type ReasoningClaim,
 } from "../repositories/reasoning-workspace-repository";
 import { buildEvidenceContext } from "./evidence-context-service";
+import { EventRepository } from "../repositories/event-repository";
 
 export function buildReasoningContext(
   connection: DatabaseConnection,
@@ -50,6 +51,27 @@ export function buildReasoningContext(
         .length,
     },
     sources: fixed.sources,
+    timeline: new EventRepository(connection).listTimeline(caseId, false).map((event) => ({
+      id: event.id,
+      revision: event.revision,
+      timeBasisRevision: event.timeBasisRevision,
+      title: event.title,
+      description: event.description,
+      timeKind: event.timeKind,
+      timePrecision: event.timePrecision,
+      startOffsetSeconds: event.startOffsetSeconds,
+      endOffsetSeconds: event.endOffsetSeconds,
+      anchorEventId: event.anchorEventId,
+      relativeOffsetSeconds: event.relativeOffsetSeconds,
+      resolvedTime: event.resolvedTime,
+      certainty: event.certainty,
+      location: event.location ? { id: event.location.id, name: event.location.name } : null,
+      participants: event.participants.map((person) => ({
+        personId: person.personId, name: person.person.displayName,
+        role: person.role, presence: person.presence, notes: person.notes,
+      })),
+      evidenceClaimIds: fixed.evidence.filter((claim) => claim.events.some((link) => link.id === event.id)).map((claim) => claim.id),
+    })),
   };
 }
 
@@ -76,3 +98,16 @@ function serializeReasoningClaim(claim: ReasoningClaim) {
 }
 
 export type ReasoningContext = ReturnType<typeof buildReasoningContext>;
+
+// Changes to the temporal input require a fresh run, even when claim text revisions are unchanged.
+export function temporalContextIsCurrent(snapshotJson: string, current: ReasoningContext) {
+  const snapshot = JSON.parse(snapshotJson) as Partial<ReasoningContext>;
+  if (!snapshot.timeline || !snapshot.case) return false;
+  const signature = (context: Pick<ReasoningContext, "case" | "timeline">) => JSON.stringify({
+    origin: context.case.timelineOriginAt,
+    mode: context.case.timelineMode,
+    timeline: context.timeline.map((event) => ({ id: event.id, revision: event.revision, basis: event.timeBasisRevision }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  });
+  return signature({ case: snapshot.case, timeline: snapshot.timeline }) === signature(current);
+}

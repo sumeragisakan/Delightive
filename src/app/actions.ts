@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import type { ActionState, AiDiagnosticActionState } from "./action-state";
 import { reasoningCitationSchema } from "@/ai/reasoning-output";
+import { absoluteTimeInput, caseTimeBasisToken, parseCivilDate } from "@/timeline/time";
 import { databaseConnection } from "@/db/client";
 import { CaseRepository } from "@/db/repositories/case-repository";
 import { EvidenceRepository } from "@/db/repositories/evidence-repository";
@@ -33,6 +34,8 @@ const aiSettingsService = new AiSettingsService(databaseConnection);
 const searchService = new SearchService(databaseConnection);
 
 const caseSchema = z.object({
+  timelineOriginLabel: z.string().trim().max(120).optional().transform((value) => value || null),
+  timelineOriginDate: z.string().optional().refine((value) => !value || parseCivilDate(value) !== null, "请输入有效的基准日期。").transform((value) => value ? new Date(parseCivilDate(value)!) : null),
   description: z.string().trim().max(2_000, "案件说明不能超过 2000 个字符。"),
   timelineMode: z.enum(["relative", "calendar", "ordinal"], {
     error: "请选择有效的时间轴类型。",
@@ -77,7 +80,7 @@ const offsetSchema = z
   .trim()
   .refine(
     (value) => value === "" || parseDuration(value) !== null,
-    "请使用 时:分:秒，例如 01:20:30 或 -00:05:00。",
+    "请填写有效的日期、时间或非负整数间隔。",
   )
   .transform((value) => (value === "" ? null : parseDuration(value)));
 const optionalPercentageSchema = z
@@ -125,6 +128,7 @@ const eventSchema = z
     relativeOffsetSeconds: offsetSchema,
     sortOrder: sortOrderSchema,
     startOffsetSeconds: offsetSchema,
+    timePrecision: z.enum(["minute", "second"]),
     timeKind: z.enum(
       ["exact", "range", "approximate", "relative", "unknown"],
       { error: "请选择有效的时间类型。" },
@@ -486,7 +490,7 @@ export async function createCaseAction(
   let caseId: string;
 
   try {
-    caseId = caseRepository.createCase(parsed.data).id;
+    caseId = caseRepository.createCase({ ...parsed.data, timelineOriginAt: parsed.data.timelineOriginDate }).id;
   } catch (error) {
     return persistenceFailure(error, "无法创建案件，请稍后重试。");
   }
@@ -532,7 +536,7 @@ export async function updateCaseAction(
   }
 
   try {
-    caseRepository.updateCase(caseId, parsed.data);
+    caseRepository.updateCase(caseId, { ...parsed.data, timelineOriginAt: parsed.data.timelineOriginDate });
   } catch (error) {
     return persistenceFailure(error, "无法保存案件信息。");
   }
@@ -551,6 +555,24 @@ export async function setCaseStatusAction(
   if (status === "archived") {
     redirect("/");
   }
+}
+
+export async function updateTimelineBasisAction(caseId: string, _previousState: ActionState, formData: FormData): Promise<ActionState> {
+  const parsed = caseSchema.pick({ timelineMode: true, timelineOriginLabel: true, timelineOriginDate: true }).safeParse(readCaseForm(formData));
+  if (!parsed.success) return validationFailure(parsed.error, "请检查案件时间基准。");
+  if (parsed.data.timelineMode === "calendar" && !parsed.data.timelineOriginDate) {
+    return { status: "error", message: "使用实际日期时，请填写第 1 天对应日期。" };
+  }
+  const current = caseRepository.getCase(caseId);
+  if (!current) return { status: "error", message: "案件不存在。" };
+  try {
+    caseRepository.updateCase(caseId, {
+      title: current.title, description: current.description, ...parsed.data,
+      timelineOriginAt: parsed.data.timelineOriginDate,
+    });
+  } catch (error) { return persistenceFailure(error, "无法保存案件时间基准。"); }
+  revalidateCase(caseId);
+  return { status: "success", message: "时间基准已保存；受影响的结论需要重新复核。" };
 }
 
 export async function createPersonAction(
@@ -686,7 +708,9 @@ export async function createEventAction(
   _previousState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const parsed = eventSchema.safeParse(readEventForm(formData));
+  const basisError = staleTimelineForm(caseId, formData);
+  if (basisError) return basisError;
+  const parsed = eventSchema.safeParse(readEventForm(formData, caseId));
 
   if (!parsed.success) {
     return validationFailure(parsed.error, "请检查事件信息。");
@@ -708,7 +732,9 @@ export async function updateEventAction(
   _previousState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const parsed = eventSchema.safeParse(readEventForm(formData));
+  const basisError = staleTimelineForm(caseId, formData);
+  if (basisError) return basisError;
+  const parsed = eventSchema.safeParse(readEventForm(formData, caseId));
 
   if (!parsed.success) {
     return validationFailure(parsed.error, "请检查事件信息。");
@@ -1733,6 +1759,8 @@ function readCaseForm(formData: FormData) {
   return {
     description: readText(formData, "description"),
     timelineMode: readText(formData, "timelineMode"),
+    timelineOriginLabel: readText(formData, "timelineOriginLabel"),
+    timelineOriginDate: readText(formData, "timelineOriginDate"),
     title: readText(formData, "title"),
   };
 }
@@ -1797,17 +1825,37 @@ function readEvidenceClaimForm(formData: FormData) {
   };
 }
 
-function readEventForm(formData: FormData) {
+function staleTimelineForm(caseId: string, formData: FormData): ActionState | null {
+  const caseFile = caseRepository.getCase(caseId);
+  if (!caseFile || readText(formData, "timelineBasis") !== caseTimeBasisToken(caseFile.timelineMode, caseFile.timelineOriginAt?.toISOString() ?? null)) {
+    return { status: "error", message: "案件时间基准已变化，请刷新页面后重新确认日期与时刻。" };
+  }
+  return null;
+}
+
+function readEventForm(formData: FormData, caseId: string) {
+  const caseFile = caseRepository.getCase(caseId);
+  const calendar = caseFile?.timelineMode === "calendar" && Boolean(caseFile.timelineOriginAt);
+  const originDate = caseFile?.timelineOriginAt?.toISOString().slice(0, 10) ?? "";
+  const timeKind = readText(formData, "timeKind");
+  const duration = (seconds: number | null) => seconds === null ? "invalid" : `${seconds < 0 ? "-" : ""}${Math.floor(Math.abs(seconds) / 3600)}:${String(Math.floor(Math.abs(seconds) % 3600 / 60)).padStart(2, "0")}:${String(Math.abs(seconds) % 60).padStart(2, "0")}`;
+  const absolute = (prefix: string) => duration(absoluteTimeInput(readText(formData, `${prefix}Day`), readText(formData, `${prefix}Clock`), calendar, originDate));
+  const amount = readText(formData, "relativeAmount");
+  const unit = readText(formData, "relativeUnit");
+  const direction = readText(formData, "relativeDirection");
+  const relative = /^\d+$/.test(amount) && ["second", "minute", "hour"].includes(unit) && ["before", "after"].includes(direction)
+    ? duration(Number(amount) * (unit === "hour" ? 3600 : unit === "minute" ? 60 : 1) * (direction === "before" ? -1 : 1)) : "invalid";
   return {
     anchorEventId: readText(formData, "anchorEventId"),
     certainty: readText(formData, "certainty"),
     description: readText(formData, "description"),
     displayTime: readText(formData, "displayTime"),
-    endOffsetSeconds: readText(formData, "endOffsetSeconds"),
+    endOffsetSeconds: timeKind === "range" ? absolute("end") : "",
     locationId: readText(formData, "locationId"),
-    relativeOffsetSeconds: readText(formData, "relativeOffsetSeconds"),
+    relativeOffsetSeconds: timeKind === "relative" ? relative : "",
     sortOrder: readText(formData, "sortOrder"),
-    startOffsetSeconds: readText(formData, "startOffsetSeconds"),
+    startOffsetSeconds: ["exact", "range", "approximate"].includes(timeKind) ? absolute("start") : "",
+    timePrecision: timeKind === "relative" ? (unit === "second" ? "second" : "minute") : readText(formData, "timePrecision") || "minute",
     timeKind: readText(formData, "timeKind"),
     title: readText(formData, "title"),
   };
@@ -1911,6 +1959,7 @@ function revalidateCase(caseId: string) {
   revalidatePath(`/cases/${caseId}/evidence`);
   revalidatePath(`/cases/${caseId}/reasoning`);
   revalidatePath(`/cases/${caseId}/reasoning/ai`);
+  revalidatePath(`/cases/${caseId}/reasoning/graph`);
   revalidatePath(`/cases/${caseId}/investigations`);
 }
 

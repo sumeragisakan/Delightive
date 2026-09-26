@@ -15,6 +15,7 @@ import {
 import { EvidenceRepository } from "./evidence-repository";
 import { EventRepository } from "./event-repository";
 import { InvestigationRepository } from "./investigation-repository";
+import { invalidateClaimsForTimelineBasis } from "../services/invalidation-service";
 
 type CaseRow = typeof cases.$inferSelect;
 type PersonRow = typeof people.$inferSelect;
@@ -108,25 +109,43 @@ export class CaseRepository {
       title: string;
       description?: string;
       timelineMode: CaseRow["timelineMode"];
+      timelineOriginLabel?: string | null;
+      timelineOriginAt?: Date | null;
     },
   ): CaseRow {
-    const updated = this.connection.db
-      .update(cases)
-      .set({
-        title: requireText(input.title, "Case title"),
-        description: input.description?.trim() ?? "",
-        timelineMode: input.timelineMode,
-        updatedAt: new Date(),
-      })
-      .where(eq(cases.id, caseId))
-      .returning()
-      .get();
+    const current = this.getCase(caseId);
+    if (!current) throw new Error(`Case not found: ${caseId}`);
+    const originAt = input.timelineOriginAt === undefined ? current.timelineOriginAt : input.timelineOriginAt;
+    const originLabel = input.timelineOriginLabel === undefined ? current.timelineOriginLabel : input.timelineOriginLabel?.trim() || null;
+    return this.connection.sqlite.transaction(() => {
+      const updated = this.connection.db
+        .update(cases)
+        .set({
+          title: requireText(input.title, "Case title"),
+          description: input.description?.trim() ?? "",
+          timelineMode: input.timelineMode,
+          timelineOriginAt: originAt,
+          timelineOriginLabel: originLabel,
+          updatedAt: new Date(),
+        })
+        .where(eq(cases.id, caseId))
+        .returning()
+        .get();
 
-    if (!updated) {
-      throw new Error(`Case not found: ${caseId}`);
-    }
-
-    return updated;
+      if (!updated) throw new Error(`Case not found: ${caseId}`);
+      // Rebase storage coordinates; independently entered civil dates stay fixed.
+      if (current.timelineMode === "calendar" && updated.timelineMode === "calendar" && current.timelineOriginAt && updated.timelineOriginAt) {
+        const shift = (current.timelineOriginAt.getTime() - updated.timelineOriginAt.getTime()) / 1000;
+        if (shift !== 0) this.connection.sqlite.prepare(`
+          update events set start_offset_seconds = start_offset_seconds + ?, end_offset_seconds = end_offset_seconds + ?
+          where case_id = ? and time_kind in ('exact', 'range', 'approximate')
+        `).run(shift, shift, caseId);
+      }
+      if (current.timelineMode !== updated.timelineMode || current.timelineOriginAt?.getTime() !== updated.timelineOriginAt?.getTime()) {
+        invalidateClaimsForTimelineBasis(this.connection, caseId, updated.updatedAt);
+      }
+      return updated;
+    })();
   }
 
   setCaseStatus(caseId: string, status: CaseRow["status"]): CaseRow {

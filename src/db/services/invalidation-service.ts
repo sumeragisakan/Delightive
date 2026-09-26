@@ -5,12 +5,34 @@ export function invalidateClaimsForEvent(
   eventId: string,
   changedAt = new Date(),
 ) {
+  // Derived time changes do not fabricate a user revision of descendant events.
+  connection.sqlite.prepare(`
+    with recursive affected_events(id) as (
+      select id from events where anchor_event_id = ?
+      union
+      select e.id from events e join affected_events a on e.anchor_event_id = a.id
+    )
+    update events set time_basis_revision = time_basis_revision + 1
+    where id in (select id from affected_events)
+  `).run(eventId);
   return invalidateClaims(
     connection,
-    "select claim_id from claim_events where event_id = ?",
+    `select claim_id from claim_events where event_id in (
+      with recursive affected_events(id) as (
+        select ? union
+        select e.id from events e join affected_events a on e.anchor_event_id = a.id
+      ) select id from affected_events
+    )`,
     eventId,
     changedAt,
   );
+}
+
+export function invalidateClaimsForTimelineBasis(connection: DatabaseConnection, caseId: string, changedAt = new Date()) {
+  connection.sqlite.prepare("update events set time_basis_revision = time_basis_revision + 1 where case_id = ?").run(caseId);
+  return invalidateClaims(connection,
+    "select ce.claim_id from claim_events ce join events e on e.id = ce.event_id where e.case_id = ?",
+    caseId, changedAt);
 }
 
 export function invalidateClaimsForSource(

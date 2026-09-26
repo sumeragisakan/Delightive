@@ -87,6 +87,7 @@ export class OpenAiResponsesProvider implements ReasoningModelProvider {
             "counterexample 必须把被反驳内容写入 targetClaimId；contradiction 必须把冲突两侧分别写入 targetClaimId 和 secondaryClaimId，且两者都必须出现在 citations 中。其他类型不适用的目标字段写 null。",
             "不要输出隐藏思维过程。rationale 只写可供用户核查的简短理由。",
             "不要补造人物、事件、来源或确定性；不确定时明确降低 confidence。",
+            "timeline 是案件共用时间轴，事件记录本身不等同于已审核事实；必须结合 evidenceClaimIds 和来源核查。可比较不同事件链的全局时间，但时间范围、大约时间、分钟精度和无有效锚点的事件都不能当作精确秒数。相对时间使用 resolvedTime，不能覆盖独立的绝对时间记录。时间矛盾建议仍须引用实际命题，不得用事件 ID 冒充 claim ID。",
           ].join("\n"),
           max_output_tokens: this.maxOutputTokens,
           model: this.model,

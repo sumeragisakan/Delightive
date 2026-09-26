@@ -1,3 +1,4 @@
+import { resolveEventTime } from "../../timeline/time";
 import { randomUUID } from "node:crypto";
 
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
@@ -40,6 +41,7 @@ export type EvidenceClaim = ClaimRow & {
   events: Array<{
     event: typeof events.$inferSelect;
     eventRevision: number;
+    timeIssues: string[];
     isStale: boolean;
     role: ClaimEntityRole;
   }>;
@@ -200,6 +202,7 @@ export class EvidenceRepository {
     caseId: string,
     includeArchived = true,
   ): EvidenceClaim[] {
+    const eventById = new Map(this.connection.db.select().from(events).where(eq(events.caseId, caseId)).all().map((event) => [event.id, event]));
     return this.connection.db
       .select()
       .from(claims)
@@ -212,7 +215,7 @@ export class EvidenceRepository {
       .orderBy(asc(claims.archivedAt), desc(claims.updatedAt))
       .all()
       .filter((claim) => includeArchived || claim.archivedAt === null)
-      .map((claim) => this.hydrateClaim(claim));
+      .map((claim) => this.hydrateClaim(claim, eventById));
   }
 
   createEvidenceClaim(input: {
@@ -249,6 +252,10 @@ export class EvidenceRepository {
       : null;
     const sourceRelation = input.sourceRelation ?? "origin";
     const status = input.status ?? "draft";
+    if (status === "accepted" && event) {
+      const eventById = new Map(this.connection.db.select().from(events).where(eq(events.caseId, input.caseId)).all().map((row) => [row.id, row]));
+      if (resolveEventTime(event, eventById).status === "invalid") throw new Error("事件时间依据不可用，请先恢复或修正参照事件。");
+    }
 
     if (
       status === "accepted" &&
@@ -292,6 +299,7 @@ export class EvidenceRepository {
             claimId: claim.id,
             eventId: event.id,
             eventRevision: event.revision,
+          eventTimeBasisRevision: event.timeBasisRevision,
             role: input.eventRole ?? "context",
           })
           .run();
@@ -340,6 +348,10 @@ export class EvidenceRepository {
     assertPercentage(input.confidence, "Claim confidence");
     this.assertSpeaker(caseId, current.kind, input.speakerPersonId ?? null);
 
+    if (input.status === "accepted" && this.hydrateClaim(current).events.some((link) => {
+      const eventById = new Map(this.connection.db.select().from(events).where(eq(events.caseId, caseId)).all().map((event) => [event.id, event]));
+      return resolveEventTime(link.event, eventById).status === "invalid";
+    })) throw new Error("事件时间依据不可用，请先恢复或修正参照事件。");
     if (input.status === "accepted" && !this.hasActiveProvenance(claimId)) {
       throw new Error("Accepted evidence requires an active provenance source.");
     }
@@ -498,6 +510,7 @@ export class EvidenceRepository {
           claimId: claim.id,
           eventId: event.id,
           eventRevision: event.revision,
+          eventTimeBasisRevision: event.timeBasisRevision,
           role: input.role ?? "context",
         })
         .returning()
@@ -649,7 +662,8 @@ export class EvidenceRepository {
     });
   }
 
-  private hydrateClaim(claim: ClaimRow): EvidenceClaim {
+  private hydrateClaim(claim: ClaimRow, basis?: Map<string, typeof events.$inferSelect>): EvidenceClaim {
+    const eventById = basis ?? new Map(this.connection.db.select().from(events).where(eq(events.caseId, claim.caseId)).all().map((event) => [event.id, event]));
     const sourceLinks = this.connection.db
       .select({ link: claimSources, source: sources })
       .from(claimSources)
@@ -672,8 +686,12 @@ export class EvidenceRepository {
       .map(({ event, link }) => ({
         event,
         eventRevision: link.eventRevision,
+        timeIssues: [
+          ...(link.eventTimeBasisRevision !== event.timeBasisRevision ? ["参照事件或案件时间基准已变化，需要重新复核。"] : []),
+          ...(resolveEventTime(event, eventById).status === "invalid" ? [resolveEventTime(event, eventById).reason ?? "时间依据不可用。"] : []),
+        ],
         isStale:
-          link.eventRevision !== event.revision || event.archivedAt !== null,
+          link.eventRevision !== event.revision || link.eventTimeBasisRevision !== event.timeBasisRevision || event.archivedAt !== null || resolveEventTime(event, eventById).status === "invalid",
         role: link.role,
       }));
     const personLinks = this.connection.db
@@ -952,7 +970,7 @@ export class EvidenceRepository {
       .prepare(
         `
           update claim_events
-          set event_revision = (
+          set event_time_basis_revision = (select time_basis_revision from events where events.id = claim_events.event_id), event_revision = (
             select revision from events
             where events.id = claim_events.event_id
           )

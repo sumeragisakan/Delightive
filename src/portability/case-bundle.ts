@@ -291,6 +291,14 @@ export function validateCaseBundle(
     }
 
     for (const [index, row] of rows.entries()) {
+      // Additive compatibility with case packages exported before time-basis tracking.
+      if (isRecord(row)) {
+        if (table === "events") {
+          if (!Object.hasOwn(row, "time_precision")) row.time_precision = "second";
+          if (!Object.hasOwn(row, "time_basis_revision")) row.time_basis_revision = 1;
+        }
+        if ((table === "claim_events" || table === "investigation_item_events") && !Object.hasOwn(row, "event_time_basis_revision")) row.event_time_basis_revision = 1;
+      }
       validateRow(table, index, row, schema[table].columns);
     }
   }

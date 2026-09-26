@@ -704,7 +704,7 @@ export function EvidenceLinksManager({
             <RelationChip
               action={removeAction}
               key={`${link.event.id}-${link.role}`}
-              label={`${roleLabels[link.role]} · ${link.event.title}${link.isStale ? " · 待核对" : ""}`}
+              label={`${roleLabels[link.role]} · ${link.event.title}${link.isStale ? " · 待核对" : ""}${link.timeIssues.length ? ` · ${link.timeIssues.join("；")}` : ""}`}
               stale={link.isStale}
             />
           );

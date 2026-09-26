@@ -27,11 +27,14 @@ The SQLite database is local by default. The persistence boundary is kept on the
 - Record people with duplicate display names, reusable ambiguous aliases, and visual colors.
 - Build second-precision timelines with exact, approximate, ranged, relative, and unknown times.
 - Nest locations, assign event participants, and preserve every event aggregate revision.
+- Enter civil calendar dates or fictional case days with minute/second precision, or choose an anchor event, before/after, and an interval. Preview and sort resolved relative chains on the shared case timeline without replacing the original time expression.
+- Propagate anchor edits and archival through multi-hop event chains. Track derived time-basis versions separately from authored event revisions, flag linked evidence and investigations, and require human review of affected conclusions.
 - Record revisioned chapters, testimony, documents, images, and user notes as provenance sources.
 - Keep accepted facts source-backed, while allowing unsourced drafts and explicit character statements.
 - Link evidence to sources, people, events, and locations with revision-aware dependencies.
 - Mark affected accepted claims as `needs_review` when a source, event, or upstream claim changes.
 - Run cited AI consistency checks, hypothesis expansion, counterexample searches, and investigation-gap analysis against an immutable branch snapshot.
+- Include the global event timeline, relative-time bases, uncertainty, locations, and participant presence in AI snapshots. A changed temporal input requires a fresh run before editing or accepting old suggestions; legacy runs without this temporal snapshot also require a retry.
 - Review every AI suggestion before turning it into a branch hypothesis; AI output cannot directly enter the trusted layer.
 - Preserve model output while recording user edits as separate suggestion revisions.
 - Resolve AI suggestions by type: branch hypothesis, explicit contradiction, or a tracked investigation item.
@@ -95,6 +98,8 @@ pnpm db:reindex
 ```
 
 Migration files under `drizzle/` are committed. Local database files under `.data/` are not. The search index is derived from case records: normal edits and imports refresh it automatically, while `pnpm db:reindex` rebuilds every case after manual database maintenance.
+
+Set the shared date basis under **时间轴 → 案件时间基准**. Without a real date, events use fictional case days; day 1 can be named **案发当天**. Calendar dates represent the story's civil clock and do not change with the computer's timezone. Changing an existing calendar date basis rebases storage offsets to preserve independently entered civil dates. Switching fictional case days to calendar dates maps day 1 to the chosen date. Both changes mark linked accepted conclusions for review. Relative chains with unknown anchors stay unlocated; archived or missing anchors are unavailable. Approximate times have no invented error margin. Relative ranges, order-only constraints, multiple independent time sources per event, and natural-language parsing remain future work.
 
 ## Roadmap
 

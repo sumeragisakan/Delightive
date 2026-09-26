@@ -1,3 +1,6 @@
+import { TimelineBasisForm } from "@/app/components/timeline-basis-form";
+import { type CaseTimeCoordinates } from "@/app/components/event-time-fields";
+import { caseTimeBasisToken, formatResolvedTime } from "@/timeline/time";
 import { notFound } from "next/navigation";
 
 import { CaseWorkspaceFrame } from "../../../components/case-workspace-frame";
@@ -24,12 +27,16 @@ export default async function TimelinePage({
     notFound();
   }
 
+  const coordinates: CaseTimeCoordinates = {
+    calendar: caseFile.timelineMode === "calendar" && Boolean(caseFile.timelineOriginAt),
+    originDate: caseFile.timelineOriginAt?.toISOString().slice(0, 10) ?? "",
+    originLabel: caseFile.timelineOriginLabel ?? "",
+    basisToken: caseTimeBasisToken(caseFile.timelineMode, caseFile.timelineOriginAt?.toISOString() ?? null),
+  };
   const activeEvents = events.filter((event) => event.archivedAt === null);
-  const absoluteEvents = activeEvents.filter((event) =>
-    ["exact", "range", "approximate"].includes(event.timeKind),
-  );
+  const absoluteEvents = activeEvents.filter((event) => event.resolvedTime.status === "located");
   const relativeEvents = activeEvents.filter(
-    (event) => event.timeKind === "relative",
+    (event) => event.timeKind === "relative" && event.resolvedTime.status !== "located",
   );
   const unknownEvents = activeEvents.filter(
     (event) => event.timeKind === "unknown",
@@ -42,15 +49,17 @@ export default async function TimelinePage({
       activeModule="timeline"
       aside={
         <div className="space-y-7 lg:sticky lg:top-8">
+          <TimelineBasisForm key={`${caseFile.timelineMode}-${coordinates.originDate}`} caseFile={caseFile} />
           <section>
             <p className="eyebrow">新增记录</p>
             <h2 className="mt-2 text-xl font-semibold tracking-[-0.025em]">
               加入事件
             </h2>
             <p className="mb-6 mt-2 text-sm leading-6 text-[var(--muted)]">
-              标准时间精确到秒；“作品中的写法”用于保留章节与原文表达。
+              填写日期与时刻，或选择参照事件及前后间隔。“作品中的写法”保留原文表达。
             </p>
             <EventForm
+              coordinates={coordinates}
               caseId={caseId}
               eventOptions={events}
               locations={locations}
@@ -89,31 +98,34 @@ export default async function TimelinePage({
           </h2>
         </div>
         <p className="max-w-lg text-sm leading-6 text-[var(--muted)]">
-          时间确定的事件按秒排序；相对事件和时间未定事件分别保留，避免伪造精度。
+          已定位的事件在案件共同时间轴上排序；相对时间保留参照关系，范围和近似时间保留不确定性。
         </p>
       </div>
 
       {activeEvents.length > 0 ? (
         <div className="mt-7 space-y-10">
           <TimelineGroup
+            coordinates={coordinates}
             caseId={caseId}
             eventOptions={events}
             eventTitles={eventTitles}
             events={absoluteEvents}
-            label="定位时间"
+            label="案件共同时间轴"
             locations={locations}
             people={people}
           />
           <TimelineGroup
+            coordinates={coordinates}
             caseId={caseId}
             eventOptions={events}
             eventTitles={eventTitles}
             events={relativeEvents}
-            label="相对时间"
+            label="尚未定位的相对事件"
             locations={locations}
             people={people}
           />
           <TimelineGroup
+            coordinates={coordinates}
             caseId={caseId}
             eventOptions={events}
             eventTitles={eventTitles}
@@ -149,7 +161,7 @@ export default async function TimelinePage({
                 <div>
                   <h3 className="font-semibold">{event.title}</h3>
                   <p className="mt-1 text-sm text-[var(--muted)]">
-                    {formatEventTime(event, eventTitles)} · 修订 {event.revision}
+                    {formatEventTime(event, eventTitles, coordinates)} · 修订 {event.revision}
                   </p>
                 </div>
                 <EventArchiveButton archived caseId={caseId} eventId={event.id} />
@@ -163,6 +175,7 @@ export default async function TimelinePage({
 }
 
 function TimelineGroup({
+  coordinates,
   caseId,
   eventOptions,
   eventTitles,
@@ -171,6 +184,7 @@ function TimelineGroup({
   locations,
   people,
 }: {
+  coordinates: CaseTimeCoordinates;
   caseId: string;
   eventOptions: TimelineEvent[];
   eventTitles: Map<string, string>;
@@ -201,6 +215,7 @@ function TimelineGroup({
       <div className="timeline-list">
         {events.map((event) => (
           <TimelineCard
+            coordinates={coordinates}
             caseId={caseId}
             event={event}
             eventOptions={eventOptions}
@@ -216,6 +231,7 @@ function TimelineGroup({
 }
 
 function TimelineCard({
+  coordinates,
   caseId,
   event,
   eventOptions,
@@ -223,6 +239,7 @@ function TimelineCard({
   locations,
   people,
 }: {
+  coordinates: CaseTimeCoordinates;
   caseId: string;
   event: TimelineEvent;
   eventOptions: TimelineEvent[];
@@ -242,7 +259,7 @@ function TimelineCard({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="font-mono text-xs font-semibold tracking-[0.08em] text-[var(--accent)]">
-            {formatEventTime(event, eventTitles)}
+            {formatEventTime(event, eventTitles, coordinates)}
           </p>
           <h3 className="mt-2 text-xl font-semibold tracking-[-0.025em]">
             {event.title}
@@ -292,6 +309,7 @@ function TimelineCard({
         </summary>
         <div className="mt-5 space-y-6">
           <EventForm
+              coordinates={coordinates}
             caseId={caseId}
             event={event}
             eventOptions={eventOptions}
@@ -325,6 +343,7 @@ function TimelineCard({
 function formatEventTime(
   event: TimelineEvent,
   eventTitles: Map<string, string>,
+  coordinates: CaseTimeCoordinates,
 ) {
   const writtenTime = event.displayTime ? `${event.displayTime} · ` : "";
 
@@ -335,22 +354,22 @@ function formatEventTime(
     const anchor = event.anchorEventId
       ? (eventTitles.get(event.anchorEventId) ?? "未知事件")
       : "未知事件";
-    return `${writtenTime}${anchor} ${formatSignedSeconds(event.relativeOffsetSeconds ?? 0)}`;
+    return `${writtenTime}${anchor} ${formatSignedSeconds(event.relativeOffsetSeconds ?? 0)} · ${event.resolvedTime.status === "located" ? "推算：" : ""}${formatResolvedTime(event.resolvedTime, coordinates.calendar ? coordinates.originDate : "", coordinates.originLabel)}`;
   }
   if (event.timeKind === "range") {
-    return `${writtenTime}${formatSignedSeconds(event.startOffsetSeconds ?? 0)} — ${formatSignedSeconds(event.endOffsetSeconds ?? 0)}`;
+    return `${writtenTime}${formatResolvedTime(event.resolvedTime, coordinates.calendar ? coordinates.originDate : "", coordinates.originLabel)}`;
   }
 
-  const prefix = event.timeKind === "approximate" ? "约 " : "";
-  return `${writtenTime}${prefix}${formatSignedSeconds(event.startOffsetSeconds ?? 0)}`;
+  return `${writtenTime}${formatResolvedTime(event.resolvedTime, coordinates.calendar ? coordinates.originDate : "", coordinates.originLabel)}`;
 }
 
 function formatSignedSeconds(value: number) {
-  const sign = value < 0 ? "−" : "+";
+  if (value === 0) return "同一时刻";
   const absolute = Math.abs(value);
   const hours = Math.floor(absolute / 3_600);
   const minutes = Math.floor((absolute % 3_600) / 60);
   const seconds = absolute % 60;
 
-  return `${sign}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  const interval = [hours ? `${hours} 小时` : "", minutes ? `${minutes} 分钟` : "", seconds ? `${seconds} 秒` : ""].filter(Boolean).join(" ");
+  return `${value < 0 ? "之前" : "之后"} ${interval}`;
 }

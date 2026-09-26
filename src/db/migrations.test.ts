@@ -17,6 +17,33 @@ function runMigration(sqlite: Database.Database, filename: string) {
   }
 }
 
+describe("time-basis migration", () => {
+  it("preserves existing events and all foreign-key dependents without rebuilding tables", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    try {
+      const journal = JSON.parse(readFileSync(path.resolve(process.cwd(), "drizzle/meta/_journal.json"), "utf8")) as { entries: Array<{ tag: string }> };
+      for (const entry of journal.entries.filter((entry) => !entry.tag.startsWith("0009"))) runMigration(sqlite, `${entry.tag}.sql`);
+      sqlite.exec(`
+        insert into cases (id, title) values ('case', '原案件');
+        insert into events (id, case_id, title, time_kind, start_offset_seconds, revision) values ('a', 'case', '停电', 'exact', 75600, 3);
+        insert into events (id, case_id, title, time_kind, anchor_event_id, relative_offset_seconds) values ('b', 'case', '进入', 'relative', 'a', 600);
+        insert into claims (id, case_id, kind, status, content) values ('fact', 'case', 'fact', 'accepted', '原事实');
+        insert into claim_events (claim_id, event_id, event_revision) values ('fact', 'b', 1);
+        insert into reasoning_branches (id, case_id, name) values ('branch', 'case', '分支');
+        insert into investigation_items (id, case_id, branch_id, title, question) values ('item', 'case', 'branch', '核查', '核查时间');
+        insert into investigation_item_events (investigation_item_id, event_id, event_revision) values ('item', 'b', 1);
+      `);
+      runMigration(sqlite, "0009_timeline_basis.sql");
+      expect(sqlite.prepare("select revision, time_precision, time_basis_revision from events where id = 'a'").get()).toEqual({ revision: 3, time_precision: "second", time_basis_revision: 1 });
+      expect(sqlite.prepare("select anchor_event_id from events where id = 'b'").pluck().get()).toBe("a");
+      expect(sqlite.prepare("select event_time_basis_revision from claim_events").pluck().get()).toBe(1);
+      expect(sqlite.prepare("select event_time_basis_revision from investigation_item_events").pluck().get()).toBe(1);
+      expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+    } finally { sqlite.close(); }
+  });
+});
+
 describe("timeline migration", () => {
   it("preserves minute-based event data while converting it to seconds", () => {
     const sqlite = new Database(":memory:");

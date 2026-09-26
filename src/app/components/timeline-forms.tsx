@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { EventTimeFields, type CaseTimeCoordinates } from "./event-time-fields";
 import { useActionState, useEffect, useId, useRef, useState } from "react";
 
 import {
@@ -32,7 +33,7 @@ type LocationOption = {
   sortOrder: number;
 };
 
-type EventOption = Pick<TimelineEvent, "archivedAt" | "id" | "title">;
+type EventOption = TimelineEvent;
 
 type PersonOption = {
   color: string | null;
@@ -52,6 +53,7 @@ type EditableEvent = Pick<
   | "relativeOffsetSeconds"
   | "sortOrder"
   | "startOffsetSeconds"
+  | "timePrecision"
   | "timeKind"
   | "title"
 >;
@@ -198,7 +200,9 @@ export function EventForm({
   event,
   eventOptions,
   locations,
+  coordinates,
 }: {
+  coordinates: CaseTimeCoordinates;
   caseId: string;
   event?: EditableEvent;
   eventOptions: EventOption[];
@@ -213,16 +217,22 @@ export function EventForm({
     initialActionState,
   );
   const [timeKind, setTimeKind] = useState(event?.timeKind ?? "unknown");
+  const [timeFormVersion, setTimeFormVersion] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     if (!event && state.status === "success") {
       formRef.current?.reset();
     }
-  }, [event, state.status]);
+  }, [event, state]);
 
   return (
-    <form action={formAction} className="space-y-4" ref={formRef}>
+    <form action={formAction} className="space-y-4" ref={formRef} onReset={() => {
+      if (!event) {
+        setTimeKind("unknown");
+        setTimeFormVersion((version) => version + 1);
+      }
+    }}>
       <FormField htmlFor={`${id}-title`} label="事件标题" name="title" state={state}>
         <input
           className={inputClassName}
@@ -273,87 +283,7 @@ export function EventForm({
         </FormField>
       </div>
 
-      {["exact", "approximate", "range"].includes(timeKind) && (
-        <div className={`grid gap-4 ${timeKind === "range" ? "sm:grid-cols-2" : ""}`}>
-          <FormField
-            htmlFor={`${id}-start`}
-            label="起点偏移（时:分:秒）"
-            name="startOffsetSeconds"
-            state={state}
-          >
-            <input
-              className={inputClassName}
-              defaultValue={formatDurationInput(event?.startOffsetSeconds)}
-              id={`${id}-start`}
-              name="startOffsetSeconds"
-              placeholder="00:12:30"
-              required
-            />
-          </FormField>
-          {timeKind === "range" && (
-            <FormField
-              htmlFor={`${id}-end`}
-              label="终点偏移（时:分:秒）"
-              name="endOffsetSeconds"
-              state={state}
-            >
-              <input
-                className={inputClassName}
-                defaultValue={formatDurationInput(event?.endOffsetSeconds)}
-                id={`${id}-end`}
-                name="endOffsetSeconds"
-                placeholder="00:14:00"
-                required
-              />
-            </FormField>
-          )}
-        </div>
-      )}
-
-      {timeKind === "relative" && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <FormField
-            htmlFor={`${id}-anchor`}
-            label="参照事件"
-            name="anchorEventId"
-            state={state}
-          >
-            <select
-              className={inputClassName}
-              defaultValue={event?.anchorEventId ?? ""}
-              id={`${id}-anchor`}
-              name="anchorEventId"
-              required
-            >
-              <option value="">选择参照事件</option>
-              {eventOptions
-                .filter(
-                  (option) => option.archivedAt === null && option.id !== event?.id,
-                )
-                .map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.title}
-                  </option>
-                ))}
-            </select>
-          </FormField>
-          <FormField
-            htmlFor={`${id}-relative-offset`}
-            label="相对偏移（时:分:秒）"
-            name="relativeOffsetSeconds"
-            state={state}
-          >
-            <input
-              className={inputClassName}
-              defaultValue={formatDurationInput(event?.relativeOffsetSeconds)}
-              id={`${id}-relative-offset`}
-              name="relativeOffsetSeconds"
-              placeholder="-00:05:00 或 00:00:30"
-              required
-            />
-          </FormField>
-        </div>
-      )}
+      <EventTimeFields key={`${coordinates.basisToken}-${event?.id ?? "new"}-${timeFormVersion}`} id={id} event={event} events={eventOptions} timeKind={timeKind} coordinates={coordinates} fieldErrors={state.fieldErrors} />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField
@@ -744,20 +674,6 @@ function useResetOnSuccess(
       formRef.current?.reset();
     }
   }, [formRef, state.status]);
-}
-
-function formatDurationInput(value: number | null | undefined) {
-  if (value == null) {
-    return "";
-  }
-
-  const sign = value < 0 ? "-" : "";
-  const absolute = Math.abs(value);
-  const hours = Math.floor(absolute / 3_600);
-  const minutes = Math.floor((absolute % 3_600) / 60);
-  const seconds = absolute % 60;
-
-  return `${sign}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 const participantRoleLabels = {

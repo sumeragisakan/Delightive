@@ -1,4 +1,7 @@
 import { eq } from "drizzle-orm";
+import { EventRepository } from "../repositories/event-repository";
+import { formatResolvedTime } from "../../timeline/time";
+import { buildReasoningContext, temporalContextIsCurrent } from "./reasoning-context-service";
 
 import type { ReasoningCitation } from "../../ai/reasoning-output";
 import type { DatabaseConnection } from "../connection";
@@ -123,7 +126,7 @@ export class ReasoningGraphService {
 
   build(caseId: string, requestedBranchId?: string | null): ReasoningGraph | null {
     const caseFile = this.connection.db
-      .select({ id: cases.id })
+      .select()
       .from(cases)
       .where(eq(cases.id, caseId))
       .get();
@@ -158,8 +161,9 @@ export class ReasoningGraphService {
               (link) => `来源“${link.source.title}”已有新修订或已归档。`,
             ),
             ...evidenceDetails.events.filter((link) => link.isStale).map(
-              (link) => `事件“${link.event.title}”已有新修订或已归档。`,
+              (link) => `事件“${link.event.title}”已有新修订、时间依据变化或不可用。`,
             ),
+            ...evidenceDetails.events.flatMap((link) => link.timeIssues),
           ]
         : [];
       const stateIssues = claimStateIssues(claim);
@@ -268,6 +272,19 @@ export class ReasoningGraphService {
       }
     }
 
+    const timelineById = new Map(new EventRepository(this.connection).listTimeline(caseId).map((event) => [event.id, event]));
+    for (const node of nodes.values()) {
+      if (node.kind !== "event") continue;
+      const event = timelineById.get(node.recordId);
+      if (!event) continue;
+      node.body += `\n\n${event.timeKind === "relative" ? "推算时间：" : "时间："}${formatResolvedTime(event.resolvedTime,
+        caseFile.timelineMode === "calendar" ? caseFile.timelineOriginAt?.toISOString().slice(0, 10) ?? "" : "", caseFile.timelineOriginLabel ?? "")}`;
+      if (event.resolvedTime.status === "invalid") {
+        node.stale = true;
+        node.issues = unique([...node.issues, event.resolvedTime.reason ?? "时间依据不可用。"]);
+      }
+    }
+
     for (const edge of edges.values()) {
       if (!edge.unresolved) continue;
       const source = nodes.get(edge.source);
@@ -317,7 +334,14 @@ export class ReasoningGraphService {
     const runs = this.ai
       .listRuns(caseId)
       .filter((run) => lineageIds.has(run.branchId));
+    const temporalState = new Map<string, ReturnType<typeof buildReasoningContext>>();
     for (const run of runs) {
+      let current = temporalState.get(run.branchId);
+      if (!current) {
+        current = buildReasoningContext(this.connection, caseId, run.branchId);
+        temporalState.set(run.branchId, current);
+      }
+      const timeStale = !temporalContextIsCurrent(run.input.contextJson, current);
       for (const suggestion of run.suggestions) {
         if (suggestion.status === "dismissed") continue;
         const staleCitations = suggestion.effective.citations.filter(
@@ -337,13 +361,14 @@ export class ReasoningGraphService {
           id,
           issues: unique([
             ...suggestion.validationIssues,
+            ...(timeStale ? ["时间轴或时间依据已变化，请重新运行推演。"] : []),
             ...staleCitations.map(() => "引用的命题已有新修订或不可用。"),
           ]),
           kind: "suggestion",
           lane: "exploration",
           recordId: suggestion.id,
           revision: suggestion.edits[0]?.revision ?? 0,
-          stale: staleCitations.length > 0,
+          stale: timeStale || staleCitations.length > 0,
           status: suggestion.status,
           subtype: suggestion.kind,
           title: suggestion.effective.title,

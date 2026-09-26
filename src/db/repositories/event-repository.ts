@@ -15,6 +15,7 @@ import {
   people,
 } from "../schema";
 import { invalidateClaimsForEvent } from "../services/invalidation-service";
+import { resolveEventTime, type ResolvedTime } from "../../timeline/time";
 
 type EventRow = typeof events.$inferSelect;
 type EventParticipantRow = typeof eventParticipants.$inferSelect;
@@ -26,6 +27,7 @@ export type TimelineParticipant = EventParticipantRow & {
 };
 
 export type TimelineEvent = EventRow & {
+  resolvedTime: ResolvedTime;
   dependentClaimCount: number;
   location: LocationRow | null;
   participants: TimelineParticipant[];
@@ -38,6 +40,7 @@ type EventInput = {
   locationId?: string | null;
   anchorEventId?: string | null;
   timeKind?: EventRow["timeKind"];
+  timePrecision?: EventRow["timePrecision"];
   startOffsetSeconds?: number | null;
   endOffsetSeconds?: number | null;
   relativeOffsetSeconds?: number | null;
@@ -63,7 +66,9 @@ export class EventRepository {
       .all()
       .filter((event) => includeArchived || event.archivedAt === null);
 
-    return rows.map((event) => this.hydrateEvent(event)).sort(compareEvents);
+    const allRows = this.connection.db.select().from(events).where(eq(events.caseId, caseId)).all();
+    const eventById = new Map(allRows.map((event) => [event.id, event]));
+    return rows.map((event) => this.hydrateEvent(event, eventById)).sort(compareEvents);
   }
 
   getEvent(caseId: string, eventId: string): TimelineEvent | undefined {
@@ -104,6 +109,7 @@ export class EventRepository {
           displayTime: input.displayTime?.trim() || null,
           certainty: input.certainty ?? null,
           sortOrder: input.sortOrder ?? 0,
+          timePrecision: input.timePrecision ?? "second",
           ...time,
         })
         .returning()
@@ -146,6 +152,7 @@ export class EventRepository {
           displayTime: input.displayTime?.trim() || null,
           certainty: input.certainty ?? null,
           sortOrder: input.sortOrder ?? current.sortOrder,
+          timePrecision: input.timePrecision ?? current.timePrecision,
           revision: current.revision + 1,
           updatedAt: changedAt,
           ...time,
@@ -319,7 +326,8 @@ export class EventRepository {
     return revise();
   }
 
-  private hydrateEvent(event: EventRow): TimelineEvent {
+  private hydrateEvent(event: EventRow, eventById?: Map<string, EventRow>): TimelineEvent {
+    const basis = eventById ?? new Map(this.connection.db.select().from(events).where(eq(events.caseId, event.caseId)).all().map((row) => [row.id, row]));
     const location = event.locationId
       ? (this.connection.db
           .select()
@@ -341,7 +349,7 @@ export class EventRepository {
       .where(eq(claimEvents.eventId, event.id))
       .all().length;
 
-    return { ...event, dependentClaimCount, location, participants };
+    return { ...event, resolvedTime: resolveEventTime(event, basis), dependentClaimCount, location, participants };
   }
 
   private getEventOrThrow(eventId: string, caseId?: string): EventRow {
@@ -543,7 +551,9 @@ export class EventRepository {
         id: randomUUID(),
         eventId: current.id,
         revision: current.revision,
-        snapshot: JSON.stringify({ event: current, participants, sources }),
+        snapshot: JSON.stringify({ event: current, participants, sources, timeCoordinates: this.connection.db.select({
+          mode: cases.timelineMode, originAt: cases.timelineOriginAt, originLabel: cases.timelineOriginLabel,
+        }).from(cases).where(eq(cases.id, current.caseId)).get() }),
         changedBy,
         changedAt,
       })
@@ -584,17 +594,17 @@ function compareEvents(left: TimelineEvent, right: TimelineEvent) {
   }
 
   const timeDifference =
-    (left.startOffsetSeconds ?? Number.MAX_SAFE_INTEGER) -
-    (right.startOffsetSeconds ?? Number.MAX_SAFE_INTEGER);
+    (left.resolvedTime.start ?? Number.MAX_SAFE_INTEGER) -
+    (right.resolvedTime.start ?? Number.MAX_SAFE_INTEGER);
 
   return timeDifference || left.sortOrder - right.sortOrder;
 }
 
-function eventRank(event: EventRow) {
+function eventRank(event: TimelineEvent) {
   if (event.archivedAt) {
     return 3;
   }
-  if (["exact", "range", "approximate"].includes(event.timeKind)) {
+  if (event.resolvedTime.status === "located") {
     return 0;
   }
   return event.timeKind === "relative" ? 1 : 2;

@@ -142,6 +142,7 @@ export class ReasoningRepository {
         claimId: claim.id,
         eventId: event.id,
         eventRevision: event.revision,
+          eventTimeBasisRevision: event.timeBasisRevision,
         role: input.role ?? "context",
       })
       .returning()
